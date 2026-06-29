@@ -57,6 +57,32 @@ class CreateMedia(TestCase):
         )
 
     @override_settings(MEDIA_ROOT=("create_media"))
+    def test_media_save_anime_no_duplicate_on_repeated_post(self):
+        """Posting media_save twice for the same anime must not create a duplicate row."""
+        Item.objects.create(
+            media_id="9999",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="No Dupe Anime",
+            image="http://example.com/image.jpg",
+        )
+        payload = {
+            "media_id": "9999",
+            "source": Sources.MAL.value,
+            "media_type": MediaTypes.ANIME.value,
+            "status": Status.PLANNING.value,
+            "progress": 0,
+            "repeats": 0,
+        }
+        self.client.post(reverse("media_save"), payload)
+        self.client.post(reverse("media_save"), payload)
+
+        self.assertEqual(
+            Anime.objects.filter(item__media_id="9999", user=self.user).count(),
+            1,
+        )
+
+    @override_settings(MEDIA_ROOT=("create_media"))
     def test_create_tv(self):
         """Test the creation of a TV object through views."""
         Item.objects.create(

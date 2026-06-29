@@ -5,17 +5,21 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from app.models import (
     Anime,
+    AnimeEpisode,
     AnimeSeriesLink,
     AnimeSeriesRelation,
     AnimeSeries,
     Item,
+    MediaManager,
     MediaTypes,
     Sources,
     Status,
 )
+from events.models import Event
 
 # Minimal metadata returned when Anime.save() calls process_progress / process_status
 _ANIME_META_STUB = {
@@ -260,3 +264,212 @@ class BuildRelatedGuardTest(TestCase):
                 from_series=self.other_item, to_series=self.series_item,
             ).exists(),
         )
+
+
+class AnnotateAnimeSeriesProgressTest(TestCase):
+    """Tests for MediaManager._annotate_animeseries_progress priority chain."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='test', password='pw')
+        self.series_item = _make_series_item('Series')
+        self.s1 = _make_anime_item('101', 'Season 1')
+        self.s2 = _make_anime_item('102', 'Season 2')
+        self.s3 = _make_anime_item('103', 'Season 3')
+
+        self.anime_series = AnimeSeries.objects.create(
+            item=self.series_item, user=self.user, status=Status.IN_PROGRESS.value,
+        )
+
+    def _annotate(self):
+        series_list = list(
+            AnimeSeries.objects.filter(pk=self.anime_series.pk).select_related('item'),
+        )
+        MediaManager()._annotate_animeseries_progress(series_list)
+        return series_list[0]
+
+    def test_uses_total_episodes_from_link(self):
+        """Priority 1: total_episodes stored in AnimeSeriesLink is used directly."""
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s1, order=1,
+            is_extra=False, total_episodes=25,
+        )
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s2, order=2,
+            is_extra=False, total_episodes=12,
+        )
+        series = self._annotate()
+        self.assertEqual(series.max_progress, 37)
+
+    def test_falls_back_to_events_when_no_link_total(self):
+        """Priority 2: calendar events used when total_episodes is null."""
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s1, order=1,
+            is_extra=False, total_episodes=None,
+        )
+        Event.objects.create(
+            item=self.s1,
+            content_number=24,
+            datetime=timezone.now() - timezone.timedelta(days=1),
+            notification_sent=True,
+        )
+        # A later event — max should win
+        Event.objects.create(
+            item=self.s1,
+            content_number=25,
+            datetime=timezone.now() - timezone.timedelta(days=1),
+            notification_sent=True,
+        )
+        series = self._annotate()
+        self.assertEqual(series.max_progress, 25)
+
+    def test_falls_back_to_anime_episodes_when_no_events(self):
+        """Priority 3: AnimeEpisode count used when neither link total nor events exist."""
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s1, order=1,
+            is_extra=False, total_episodes=None,
+        )
+        for i in range(13):
+            AnimeEpisode.objects.create(
+                anime_item=self.s1, episode_number=i + 1, is_special=False,
+            )
+        # Specials must not count
+        AnimeEpisode.objects.create(anime_item=self.s1, episode_number=0, is_special=True)
+        series = self._annotate()
+        self.assertEqual(series.max_progress, 13)
+
+    def test_link_total_takes_priority_over_events(self):
+        """total_episodes from link overrides calendar events."""
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s1, order=1,
+            is_extra=False, total_episodes=25,
+        )
+        Event.objects.create(
+            item=self.s1,
+            content_number=99,
+            datetime=timezone.now() - timezone.timedelta(days=1),
+            notification_sent=True,
+        )
+        series = self._annotate()
+        self.assertEqual(series.max_progress, 25)
+
+    def test_extra_links_excluded(self):
+        """Extra AnimeSeriesLink members are not counted in max_progress."""
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s1, order=1,
+            is_extra=False, total_episodes=24,
+        )
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s2, order=2,
+            is_extra=True, total_episodes=4,
+        )
+        series = self._annotate()
+        self.assertEqual(series.max_progress, 24)
+
+
+class AnimeSeriesProgressDedupTest(TestCase):
+    """Tests for AnimeSeries.progress deduplication by item_id."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='test', password='pw')
+        self.series_item = _make_series_item('Series')
+        self.anime_item = _make_anime_item('200', 'Season 1')
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.anime_item, order=1, is_extra=False,
+        )
+        self.anime_series = AnimeSeries.objects.create(
+            item=self.series_item, user=self.user, status=Status.IN_PROGRESS.value,
+        )
+
+    def test_deduplicates_duplicate_anime_takes_max_progress(self):
+        """When two Anime rows share the same item_id, progress uses the higher value."""
+        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+            a1 = Anime.objects.create(
+                item=self.anime_item, user=self.user,
+                status=Status.IN_PROGRESS.value, related_series=self.anime_series,
+            )
+            # Bypass unique constraint by creating a second with a temp item then re-pointing
+            dup_item = _make_anime_item('tmp-200', 'Season 1 dup')
+            a2 = Anime.objects.create(
+                item=dup_item, user=self.user,
+                status=Status.IN_PROGRESS.value, related_series=self.anime_series,
+            )
+
+        # Simulate the duplicate-item scenario by forcing item_id equality via update
+        Anime.objects.filter(pk=a1.pk).update(progress=5)
+        Anime.objects.filter(pk=a2.pk).update(progress=10, item=self.anime_item)
+
+        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+            pk=self.anime_series.pk,
+        )
+        # Only one item_id in main_ids → max(5, 10) = 10
+        self.assertEqual(series.progress, 10)
+
+
+class LazyBuildFromSearchTest(TestCase):
+    """Tests for anime_series_builder.lazy_build_from_search_results."""
+
+    def test_creates_series_item_and_links_for_single_member(self):
+        """Single-member group gets a series Item with one AnimeSeriesLink."""
+        from app.anime_series_builder import lazy_build_from_search_results
+
+        members = [{'media_id': '1001', 'title': 'My Anime', 'image': '', 'start_date': '2020-04-01'}]
+        series_item = lazy_build_from_search_results(members, Sources.MAL.value)
+
+        self.assertEqual(series_item.media_type, MediaTypes.ANIME_SERIES.value)
+        self.assertEqual(AnimeSeriesLink.objects.filter(series_item=series_item).count(), 1)
+        link = AnimeSeriesLink.objects.get(series_item=series_item)
+        self.assertFalse(link.is_extra)
+        self.assertEqual(link.anime_item.media_id, '1001')
+
+    def test_members_sorted_by_start_date(self):
+        """Members are linked in ascending start_date order."""
+        from app.anime_series_builder import lazy_build_from_search_results
+
+        members = [
+            {'media_id': '2002', 'title': 'Season 2', 'image': '', 'start_date': '2022-01-01'},
+            {'media_id': '2001', 'title': 'Season 1', 'image': '', 'start_date': '2020-01-01'},
+        ]
+        series_item = lazy_build_from_search_results(members, Sources.MAL.value)
+
+        links = list(AnimeSeriesLink.objects.filter(series_item=series_item).order_by('order'))
+        self.assertEqual(links[0].anime_item.media_id, '2001')
+        self.assertEqual(links[1].anime_item.media_id, '2002')
+
+    def test_idempotent_second_call_does_not_duplicate(self):
+        """Calling twice with the same members returns the same series, no duplicate links."""
+        from app.anime_series_builder import lazy_build_from_search_results
+
+        members = [
+            {'media_id': '3001', 'title': 'Anime A', 'image': '', 'start_date': '2021-01-01'},
+            {'media_id': '3002', 'title': 'Anime B', 'image': '', 'start_date': '2022-01-01'},
+        ]
+        item1 = lazy_build_from_search_results(members, Sources.MAL.value)
+        item2 = lazy_build_from_search_results(members, Sources.MAL.value)
+
+        self.assertEqual(item1.pk, item2.pk)
+        self.assertEqual(AnimeSeriesLink.objects.filter(series_item=item1).count(), 2)
+
+    def test_extends_existing_series_when_member_already_linked(self):
+        """If one member is already in a series, newcomers are added to that series."""
+        from app.anime_series_builder import lazy_build_from_search_results
+
+        existing_anime = Item.objects.create(
+            media_id='4001', source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value, title='Existing', image='',
+        )
+        existing_series = Item.objects.create(
+            media_id=str(uuid.uuid4()), source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME_SERIES.value, title='Existing Series', image='',
+        )
+        AnimeSeriesLink.objects.create(
+            series_item=existing_series, anime_item=existing_anime, order=1, is_extra=False,
+        )
+
+        members = [
+            {'media_id': '4001', 'title': 'Existing', 'image': '', 'start_date': '2020-01-01'},
+            {'media_id': '4002', 'title': 'Sequel', 'image': '', 'start_date': '2022-01-01'},
+        ]
+        series_item = lazy_build_from_search_results(members, Sources.MAL.value)
+
+        self.assertEqual(series_item.pk, existing_series.pk)
+        self.assertEqual(AnimeSeriesLink.objects.filter(series_item=series_item).count(), 2)

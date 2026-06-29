@@ -10,6 +10,7 @@ from django.utils import timezone
 from app.models import (
     TV,
     Anime,
+    AnimeEpisode,
     Book,
     Episode,
     Game,
@@ -855,6 +856,22 @@ class MediaManagerTests(TestCase):
 
         manager._annotate_tv_released_episodes(tv_list, timezone.now())
         self.assertEqual(tv_list[0].max_progress, 10)
+
+    def test_annotate_max_progress_anime_falls_back_to_episode_count(self):
+        """When no events exist, annotate_max_progress uses AnimeEpisode count."""
+        manager = MediaManager()
+        anime_list = list(Anime.objects.filter(user=self.user.id).select_related('item'))
+
+        # No events — max_progress should come from AnimeEpisode records
+        for i in range(12):
+            AnimeEpisode.objects.create(
+                anime_item=self.anime_item, episode_number=i + 1, is_special=False,
+            )
+        # Specials must not count
+        AnimeEpisode.objects.create(anime_item=self.anime_item, episode_number=0, is_special=True)
+
+        manager.annotate_max_progress(anime_list, MediaTypes.ANIME.value)
+        self.assertEqual(anime_list[0].max_progress, 12)
 
     def test_get_media(self):
         """Test the get_media method."""
