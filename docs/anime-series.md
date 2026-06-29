@@ -43,6 +43,8 @@ If you open an anime's episode page for the first time and the anime already has
 
 If you are not currently tracking an anime and click a watched toggle, tracking is started automatically with status "In Progress".
 
+**Spoiler obfuscation:** if the user setting "Obfuscate unseen episodes" is enabled, thumbnails, titles, and descriptions of unwatched episodes are blurred. Clicking any blurred element reveals it without marking it watched.
+
 ### Viewing Progress
 
 Progress counters appear at two levels:
@@ -61,7 +63,7 @@ The AnimeSeries detail page has three sections:
 
 **Related** — other AnimeSeries entries that share an alternative version, alternative setting, or adaptation relationship with this franchise. Each card shows poster, title, relation type, and season count.
 
-A "Part of [Series Name]" link on each individual anime episode page links back to the parent AnimeSeries page.
+A "Part of [Series Name]" link is shown above the episode list on each individual anime detail page and links back to the parent AnimeSeries page.
 
 ---
 
@@ -131,7 +133,7 @@ The following environment variables affect Anime Series behaviour:
 |---|---|
 | `MAL_API` | MyAnimeList API v2 client ID. Required for search, relation fetching, and episode count backfill. |
 | `SIMKL_API` | Simkl API key. Required for episode metadata fetch on first page open. |
-| `ADMIN_ENABLED` | Set to `true` to enable the Django admin interface. The admin provides read-only views of `SimklMapping`, `AnimeEpisode`, and `WatchedAnimeEpisode`, and allows manual adjustment of `AnimeSeriesLink` and `AnimeSeriesRelation` records. |
+| `ADMIN_ENABLED` | Set to `true` to enable the Django admin interface. The admin provides read-only views of `SimklMapping`, `AnimeEpisode`, and `WatchedAnimeEpisode`, allows manual adjustment of `AnimeSeriesLink` and `AnimeSeriesRelation` records, and exposes a **Build Series** tool page at `/admin/app/anime/build-series/` where you can run `build_anime_series` (with optional dry-run and per-user filter) directly from the browser. |
 
 Per-user settings stored in `User` model (configurable via Profile Settings):
 
@@ -141,6 +143,10 @@ Per-user settings stored in `User` model (configurable via Profile Settings):
 | `animeseries_layout` | `table` | Display layout for the AnimeSeries list page |
 | `animeseries_sort` | `score` | Default sort order for the AnimeSeries list page |
 | `animeseries_status` | `all` | Default status filter for the AnimeSeries list page |
+
+### Search Bar Layout
+
+The media type dropdown in the search bar now uses `whitespace-nowrap` to prevent multi-line labels (e.g. "Anime Series"), and the flex container uses `items-center` so the magnifying glass icon stays vertically centred regardless of the dropdown button height.
 
 ### Deploying a Database Dump
 
