@@ -124,7 +124,7 @@ class User(AbstractUser):
     )
 
     last_search_type = models.CharField(
-        max_length=10,
+        max_length=15,
         default=MediaTypes.TV.value,
         choices=MediaTypes.choices,
     )
@@ -202,6 +202,24 @@ class User(AbstractUser):
         choices=MediaSortChoices,
     )
     anime_status = models.CharField(
+        max_length=20,
+        default=MediaStatusChoices.ALL,
+        choices=MediaStatusChoices,
+    )
+
+    # Media type preferences: Anime Series
+    animeseries_enabled = models.BooleanField(default=True)
+    animeseries_layout = models.CharField(
+        max_length=20,
+        default=LayoutChoices.TABLE,
+        choices=LayoutChoices,
+    )
+    animeseries_sort = models.CharField(
+        max_length=20,
+        default=MediaSortChoices.SCORE,
+        choices=MediaSortChoices,
+    )
+    animeseries_status = models.CharField(
         max_length=20,
         default=MediaStatusChoices.ALL,
         choices=MediaStatusChoices,
@@ -643,6 +661,13 @@ class User(AbstractUser):
             and MediaTypes.SEASON.value not in enabled_types
         ):
             enabled_types.insert(0, MediaTypes.SEASON.value)
+
+        # Add anime if animeseries is enabled (mirrors TV→Season pattern)
+        if (
+            MediaTypes.ANIME_SERIES.value in enabled_types
+            and MediaTypes.ANIME.value not in enabled_types
+        ):
+            enabled_types.insert(0, MediaTypes.ANIME.value)
 
         return enabled_types
 

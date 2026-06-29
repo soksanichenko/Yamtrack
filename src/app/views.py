@@ -23,6 +23,9 @@ from app import statistics as stats
 from app.forms import EpisodeForm, ManualItemForm, get_form_class
 from app.models import (
     TV,
+    Anime,
+    AnimeEpisode,
+    AnimeSeriesLink,
     BasicMedia,
     Item,
     MediaTypes,
@@ -30,6 +33,7 @@ from app.models import (
     Sources,
     Status,
     UserMessage,
+    WatchedAnimeEpisode,
 )
 from app.providers import manual, services, tmdb
 from app.templatetags import app_tags
@@ -255,11 +259,23 @@ def media_search(request):
 
     data = services.search(media_type, query, page, source)
 
-    # Enrich search results with user tracking data
+    # Enrich search results with user tracking data.
+    # AnimeSeries search returns mixed types (animeseries + anime fallbacks),
+    # so group by media_type and enrich each group separately, then flatten.
     if data.get("results"):
-        data["results"] = helpers.enrich_items_with_user_data(
-            request, data["results"], "search"
-        )
+        if media_type == MediaTypes.ANIME_SERIES.value:
+            from itertools import groupby
+            enriched = []
+            keyfn = lambda r: r['media_type']  # noqa: E731
+            for _, group in groupby(sorted(data['results'], key=keyfn), key=keyfn):
+                enriched.extend(
+                    helpers.enrich_items_with_user_data(request, list(group), 'search')
+                )
+            data['results'] = enriched
+        else:
+            data["results"] = helpers.enrich_items_with_user_data(
+                request, data["results"], "search"
+            )
 
     context = {
         "data": data,
@@ -288,6 +304,11 @@ def media_details(request, source, media_type, media_id, title):  # noqa: ARG001
             current_instance.item, media_metadata.get("image")
         )
 
+    # For anime: lazy-fetch episodes from Simkl and merge with user watch history.
+    if media_type == MediaTypes.ANIME.value:
+        _split_anime_related(media_metadata)
+        _enrich_anime_episodes(media_metadata, current_instance)
+
     # Enrich related items with user tracking data
     if media_metadata.get("related"):
         for section_name, related_items in media_metadata["related"].items():
@@ -305,6 +326,12 @@ def media_details(request, source, media_type, media_id, title):  # noqa: ARG001
     else:
         watch_providers = None
 
+    anime_series_nav = None
+    if request.user.is_authenticated and media_type == MediaTypes.ANIME.value:
+        anime_series_nav = _get_anime_series_nav(
+            request.user, source, anime_media_id=media_id,
+        )
+
     context = {
         "media": media_metadata,
         "media_type": media_type,
@@ -312,6 +339,7 @@ def media_details(request, source, media_type, media_id, title):  # noqa: ARG001
         "current_instance": current_instance,
         "watch_providers": watch_providers,
         "watch_provider_region": request.user.watch_provider_region,
+        "anime_series_nav": anime_series_nav,
     }
     return render(request, "app/media_details.html", context)
 
@@ -607,7 +635,7 @@ def media_save(request):
             },
         )
         model = apps.get_model(app_label="app", model_name=media_type)
-        instance = model(item=item, user=request.user)
+        instance, _ = model.objects.get_or_create(item=item, user=request.user)
 
     # Validate the form and save the instance if it's valid
     form_class = get_form_class(media_type)
@@ -710,6 +738,41 @@ def episode_save(request):
 
     related_season.watch(episode_number, form.cleaned_data["end_date"])
 
+    return helpers.redirect_back(request)
+
+
+@require_POST
+def anime_episode_toggle(request):
+    """Toggle watched/unwatched state for a single anime episode.
+
+    Auto-creates an Anime tracking record (IN_PROGRESS) if none exists.
+    Creates or deletes a WatchedAnimeEpisode record, then syncs Anime.progress.
+    """
+    if not request.user.is_authenticated:
+        return HttpResponseBadRequest('Login required')
+
+    item_pk = request.POST.get('item_pk')
+    episode_pk = request.POST.get('episode_pk')
+
+    try:
+        item = Item.objects.get(pk=item_pk, media_type=MediaTypes.ANIME.value)
+        episode = AnimeEpisode.objects.get(pk=episode_pk, anime_item=item)
+    except (Item.DoesNotExist, AnimeEpisode.DoesNotExist, ValueError):
+        return HttpResponseBadRequest('Invalid item or episode')
+
+    anime, _ = Anime.objects.get_or_create(
+        item=item,
+        user=request.user,
+        defaults={'status': Status.IN_PROGRESS.value},
+    )
+
+    existing = WatchedAnimeEpisode.objects.filter(anime=anime, episode=episode).first()
+    if existing:
+        existing.delete()
+    else:
+        WatchedAnimeEpisode.objects.create(user=request.user, anime=anime, episode=episode)
+
+    anime._sync_progress()
     return helpers.redirect_back(request)
 
 
@@ -984,3 +1047,167 @@ def service_worker():
         response = HttpResponse(f.read(), content_type="application/javascript")
         response["Service-Worker-Allowed"] = "/"
         return response
+
+
+def _get_anime_series_nav(
+    user,
+    source: str,
+    *,
+    anime_media_id: str | None = None,
+    series_media_id: str | None = None,
+) -> dict | None:
+    """Return series navigation data for an anime or animeseries detail page.
+
+    Pass anime_media_id when viewing a member anime (highlights current item).
+    Pass series_media_id when viewing the AnimeSeries itself (no highlighting).
+    Returns None if no series membership is found.
+    """
+    if series_media_id:
+        series_item = (
+            Item.objects.filter(
+                media_id=series_media_id,
+                media_type=MediaTypes.ANIME_SERIES.value,
+                source=source,
+            ).first()
+        )
+        if not series_item:
+            return None
+        current_media_id = None
+    else:
+        series_link = (
+            AnimeSeriesLink.objects.filter(
+                anime_item__media_id=anime_media_id,
+                anime_item__source=source,
+            )
+            .select_related('series_item')
+            .first()
+        )
+        if not series_link:
+            return None
+        series_item = series_link.series_item
+        current_media_id = anime_media_id
+
+    all_links = list(
+        AnimeSeriesLink.objects.filter(series_item=series_item)
+        .select_related('anime_item')
+        .order_by('order', 'anime_item__title')
+    )
+
+    tracked = {
+        a.item_id: a
+        for a in Anime.objects.filter(
+            user=user,
+            item_id__in=[lnk.anime_item_id for lnk in all_links],
+        )
+    }
+
+    return {
+        'series_item': series_item,
+        'members': [
+            {
+                'item': lnk.anime_item,
+                'media': tracked.get(lnk.anime_item_id),
+                'is_extra': lnk.is_extra,
+                'is_current': lnk.anime_item.media_id == current_media_id,
+            }
+            for lnk in all_links
+        ],
+    }
+
+
+_ALTERNATIVE_RELATION_TYPES = frozenset({"alternative_version", "spin_off"})
+
+
+def _enrich_anime_episodes(media_metadata: dict, current_instance: Anime | None) -> None:
+    """Populate media_metadata['episodes'] with per-episode watched status.
+
+    Lazily fetches episode data from Simkl on first call.
+    Also migrates legacy integer progress into WatchedAnimeEpisode records.
+    Mutates media_metadata in place.
+    """
+    # Get or create the Item so episode fetch works even for untracked anime.
+    item, _ = Item.objects.get_or_create(
+        media_id=media_metadata['media_id'],
+        media_type=MediaTypes.ANIME.value,
+        source=media_metadata['source'],
+        defaults={
+            'title': media_metadata.get('title', ''),
+            'image': media_metadata.get('image', ''),
+        },
+    )
+
+    try:
+        services.fetch_and_store_anime_episodes(item)
+    except Exception:
+        logger.warning('Could not fetch Simkl episodes for anime %s', item.media_id)
+
+    episodes_qs = AnimeEpisode.objects.filter(
+        anime_item=item, is_special=False,
+    ).order_by('episode_number')
+
+    if not episodes_qs.exists():
+        return
+
+    media_metadata['item_pk'] = item.pk
+
+    watched_ids: set[int] = set()
+    watched_ep_pks: dict[int, int] = {}
+
+    if current_instance is not None:
+        current_instance._migrate_legacy_progress()
+        rows = WatchedAnimeEpisode.objects.filter(
+            anime=current_instance,
+        ).values('episode_id', 'id')
+        for row in rows:
+            watched_ids.add(row['episode_id'])
+            watched_ep_pks[row['episode_id']] = row['id']
+
+    media_metadata['episodes'] = [
+        {
+            'episode_number': ep.episode_number,
+            'title': ep.title or f'Episode {ep.episode_number}',
+            'overview': ep.description,
+            'air_date': ep.aired.strftime('%Y-%m-%d') if ep.aired else None,
+            'image': ep.img or '',
+            'episode_pk': ep.pk,
+            'watched': ep.pk in watched_ids,
+            'watched_episode_pk': watched_ep_pks.get(ep.pk),
+        }
+        for ep in episodes_qs
+    ]
+
+
+def _split_anime_related(media_metadata: dict) -> None:
+    """Split related_anime into typed sections for anime detail display.
+
+    Extracts alternative_version/spin_off entries into a separate
+    'alternative_adaptations' section so they render under a distinct label
+    in the UI, separate from sequel/prequel chain entries.
+    Mutates media_metadata in place.
+    """
+    related = media_metadata.get("related")
+    if not related:
+        return
+
+    all_related = related.get("related_anime")
+    if not all_related:
+        return
+
+    alternatives = [
+        r for r in all_related if r.get("relation_type") in _ALTERNATIVE_RELATION_TYPES
+    ]
+    remaining = [
+        r for r in all_related if r.get("relation_type") not in _ALTERNATIVE_RELATION_TYPES
+    ]
+
+    # Rebuild the related dict in display order:
+    # main related → alternative adaptations → recommendations
+    new_related = {}
+    if remaining:
+        new_related["related_anime"] = remaining
+    if alternatives:
+        new_related["alternative_adaptations"] = alternatives
+    if related.get("recommendations"):
+        new_related["recommendations"] = related["recommendations"]
+
+    media_metadata["related"] = new_related

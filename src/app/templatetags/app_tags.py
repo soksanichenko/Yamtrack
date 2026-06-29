@@ -157,6 +157,9 @@ def media_type_readable_plural(media_type):
     if singular.lower() in [MediaTypes.ANIME.value, MediaTypes.MANGA.value]:
         return singular
 
+    if singular == MediaTypes.ANIME_SERIES.label:
+        return singular
+
     return f"{singular}s"
 
 

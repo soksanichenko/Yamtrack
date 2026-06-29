@@ -57,6 +57,7 @@ class MediaTypes(models.TextChoices):
     EPISODE = "episode", "Episode"
     MOVIE = "movie", "Movie"
     ANIME = "anime", "Anime"
+    ANIME_SERIES = "animeseries", "Anime Series"
     MANGA = "manga", "Manga"
     GAME = "game", "Game"
     BOOK = "book", "Book"
@@ -74,7 +75,7 @@ class Item(CalendarTriggerMixin, models.Model):
         choices=Sources,
     )
     media_type = models.CharField(
-        max_length=10,
+        max_length=15,
         choices=MediaTypes,
         default=MediaTypes.MOVIE.value,
     )
@@ -265,6 +266,14 @@ class MediaManager(models.Manager):
                 Prefetch(
                     "seasons__episodes",
                     queryset=Episode.objects.select_related("item"),
+                ),
+            )
+
+        if media_type == MediaTypes.ANIME_SERIES.value:
+            return queryset.prefetch_related(
+                Prefetch(
+                    "anime_seasons",
+                    queryset=Anime.objects.select_related("item"),
                 ),
             )
 
@@ -459,11 +468,15 @@ class MediaManager(models.Manager):
         if specific_media_type:
             return [specific_media_type]
 
-        # Get active types excluding TV
+        # TV is excluded — individual seasons appear instead.
+        # When animeseries is enabled, Anime is excluded too — AnimeSeries appears instead.
+        excluded = {MediaTypes.TV.value}
+        if user.animeseries_enabled:
+            excluded.add(MediaTypes.ANIME.value)
         return [
             media_type
             for media_type in user.get_active_media_types()
-            if media_type != MediaTypes.TV.value
+            if media_type not in excluded
         ]
 
     def _annotate_next_event(self, media_list):
@@ -537,6 +550,10 @@ class MediaManager(models.Manager):
             self._annotate_tv_released_episodes(media_list, current_datetime)
             return
 
+        if media_type == MediaTypes.ANIME_SERIES.value:
+            self._annotate_animeseries_progress(media_list)
+            return
+
         # For other media types, calculate max_progress from events
         # Create a dictionary mapping item_id to max content_number
         max_progress_dict = {}
@@ -559,6 +576,24 @@ class MediaManager(models.Manager):
 
         for media in media_list:
             media.max_progress = max_progress_dict.get(media.item.id)
+
+        # For anime: fall back to AnimeEpisode count when no calendar events exist
+        if media_type == MediaTypes.ANIME.value:
+            missing = [m for m in media_list if m.max_progress is None]
+            if missing:
+                episode_counts = dict(
+                    AnimeEpisode.objects.filter(
+                        anime_item_id__in=[m.item.id for m in missing],
+                        is_special=False,
+                    )
+                    .values('anime_item_id')
+                    .annotate(n=Count('id'))
+                    .values_list('anime_item_id', 'n')
+                )
+                for media in missing:
+                    count = episode_counts.get(media.item.id)
+                    if count:
+                        media.max_progress = count
 
     def _annotate_tv_released_episodes(self, tv_list, current_datetime):
         """Annotate TV shows with the number of released episodes."""
@@ -593,6 +628,71 @@ class MediaManager(models.Manager):
         for tv in tv_list:
             tv_episodes = released_episodes.get(tv.item.media_id, {})
             tv.max_progress = sum(tv_episodes.values()) if tv_episodes else 0
+
+    def _annotate_animeseries_progress(self, series_list):
+        """Annotate AnimeSeries with max_progress and _main_anime_ids.
+
+        max_progress = total released episodes across all non-extra member anime
+        (sum of max event content_number per anime item, same logic as individual Anime).
+        _main_anime_ids is used by AnimeSeries.progress to filter non-extra seasons.
+        """
+        series_item_ids = [s.item_id for s in series_list]
+
+        links = AnimeSeriesLink.objects.filter(
+            series_item_id__in=series_item_ids,
+            is_extra=False,
+        ).values('series_item_id', 'anime_item_id', 'total_episodes')
+
+        series_to_main_ids: dict = {}
+        # total_episodes stored in the link (from MAL metadata at build time)
+        link_episode_totals: dict[int, int] = {}
+        for link in links:
+            aid = link['anime_item_id']
+            series_to_main_ids.setdefault(link['series_item_id'], set()).add(aid)
+            if link['total_episodes']:
+                link_episode_totals[aid] = link['total_episodes']
+
+        all_member_ids = {aid for ids in series_to_main_ids.values() for aid in ids}
+
+        # For members without stored total_episodes, fall back to calendar events
+        no_link_total = all_member_ids - set(link_episode_totals.keys())
+        event_totals: dict[int, int] = {}
+        if no_link_total:
+            current_datetime = timezone.now()
+            for event in events.models.Event.objects.filter(
+                item_id__in=no_link_total,
+                datetime__lte=current_datetime,
+                content_number__isnull=False,
+            ).values('item_id', 'content_number'):
+                item_id = event['item_id']
+                n = event['content_number']
+                if n > event_totals.get(item_id, 0):
+                    event_totals[item_id] = n
+
+        # Last resort: AnimeEpisode counts for members still without data
+        no_events = no_link_total - set(event_totals.keys())
+        episode_counts: dict[int, int] = {}
+        if no_events:
+            episode_counts = dict(
+                AnimeEpisode.objects.filter(
+                    anime_item_id__in=no_events,
+                    is_special=False,
+                )
+                .values('anime_item_id')
+                .annotate(n=Count('id'))
+                .values_list('anime_item_id', 'n')
+            )
+
+        for series in series_list:
+            main_ids = series_to_main_ids.get(series.item_id, set())
+            total_eps = sum(
+                link_episode_totals.get(aid)
+                or event_totals.get(aid)
+                or episode_counts.get(aid, 0)
+                for aid in main_ids
+            )
+            series.max_progress = total_eps or None
+            series._main_anime_ids = main_ids
 
     def fetch_media_for_items(self, media_types, item_ids, user, status_filter=None):
         """Fetch media objects for given items, optionally filtering by status.
@@ -826,6 +926,7 @@ class Media(models.Model):
             "progressed_at",
             "user",
             "related_tv",
+            "related_series",
             "created_at",
         ],
     )
@@ -1874,10 +1975,414 @@ class Manga(Media):
     tracker = FieldTracker()
 
 
+class AnimeSeriesLink(models.Model):
+    """Global mapping of anime items to an anime series item.
+
+    Shared across all users — first tracker to add an anime creates the link.
+    """
+
+    series_item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name='series_anime',
+        limit_choices_to={'media_type': MediaTypes.ANIME_SERIES.value},
+    )
+    anime_item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name='series_memberships',
+        limit_choices_to={'media_type': MediaTypes.ANIME.value},
+    )
+    order = models.PositiveIntegerField(null=True, blank=True)
+    is_extra = models.BooleanField(default=False)
+    total_episodes = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    class Meta:
+        """Meta options for the model."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=['series_item', 'anime_item'],
+                name='app_animeserieslink_unique_series_anime',
+            ),
+        ]
+
+    def __str__(self):
+        """Return a human-readable link description."""
+        return f'{self.anime_item} → {self.series_item}'
+
+
+class AnimeSeriesRelation(models.Model):
+    """Global depth-1 relation between two AnimeSeries items.
+
+    Stored bidirectionally: both (A→B) and (B→A) are created.
+    Relation types mirror MAL: alternative_version, alternative_setting, adaptation.
+    """
+
+    RELATION_CHOICES = [
+        ('alternative_version', 'Alternative Version'),
+        ('alternative_setting', 'Alternative Setting'),
+        ('adaptation', 'Adaptation'),
+    ]
+
+    from_series = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name='relations_from',
+        limit_choices_to={'media_type': MediaTypes.ANIME_SERIES.value},
+    )
+    to_series = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name='relations_to',
+        limit_choices_to={'media_type': MediaTypes.ANIME_SERIES.value},
+    )
+    relation_type = models.CharField(max_length=30, choices=RELATION_CHOICES)
+
+    class Meta:
+        """Meta options for the model."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=['from_series', 'to_series'],
+                name='app_animeseriesrelation_unique',
+            ),
+        ]
+
+    def __str__(self):
+        """Return a human-readable relation description."""
+        return f'{self.from_series.title} → {self.to_series.title} ({self.relation_type})'
+
+
+class SimklMapping(models.Model):
+    """Global MAL → Simkl ID mapping, cached on first episode page open."""
+
+    item = models.OneToOneField(
+        Item,
+        on_delete=models.CASCADE,
+        related_name='simkl_mapping',
+        limit_choices_to={'media_type': MediaTypes.ANIME.value},
+    )
+    simkl_id = models.IntegerField()
+    cached_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        """Return human-readable mapping description."""
+        return f'{self.item.title} → Simkl:{self.simkl_id}'
+
+
+class AnimeEpisode(models.Model):
+    """Global episode metadata fetched from Simkl."""
+
+    anime_item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name='anime_episodes',
+        limit_choices_to={'media_type': MediaTypes.ANIME.value},
+    )
+    episode_number = models.PositiveSmallIntegerField()
+    title = models.CharField(max_length=500, blank=True, default='')
+    description = models.TextField(blank=True, default='')
+    aired = models.DateTimeField(null=True, blank=True)
+    img = models.URLField(max_length=500, null=True, blank=True)
+    is_special = models.BooleanField(default=False)
+
+    class Meta:
+        """Meta options for the model."""
+
+        unique_together = [['anime_item', 'episode_number']]
+        ordering = ['episode_number']
+
+    def __str__(self):
+        """Return episode identifier."""
+        return f'{self.anime_item.title} E{self.episode_number}'
+
+
+class AnimeSeries(Media):
+    """Per-user tracking record for an anime franchise, mirroring TV."""
+
+    tracker = FieldTracker()
+
+    class Meta:
+        """Meta options for the model."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'item'],
+                name='%(app_label)s_%(class)s_unique_item_user',
+            ),
+        ]
+
+    @tracker
+    def save(self, *args, **kwargs):
+        """Save the AnimeSeries instance, skipping Media progress hooks."""
+        super(Media, self).save(*args, **kwargs)
+
+    @property
+    def progress(self):
+        """Return total episodes watched across all non-extra anime seasons."""
+        if hasattr(self, '_main_anime_ids'):
+            main_ids = self._main_anime_ids
+        else:
+            main_ids = frozenset(
+                AnimeSeriesLink.objects.filter(
+                    series_item=self.item,
+                    is_extra=False,
+                ).values_list('anime_item_id', flat=True)
+            )
+        # Deduplicate by item_id — take highest progress per item to handle legacy duplicates.
+        best: dict[int, int] = {}
+        for a in self.anime_seasons.all():
+            if a.item_id in main_ids:
+                if a.progress > best.get(a.item_id, -1):
+                    best[a.item_id] = a.progress
+        return sum(best.values())
+
+    @property
+    def last_watched(self):
+        """Return title of most recently progressed anime season."""
+        seasons_with_progress = [
+            a for a in self.anime_seasons.all() if a.progressed_at is not None
+        ]
+        if not seasons_with_progress:
+            return ''
+        latest = max(seasons_with_progress, key=lambda a: a.progressed_at)
+        return latest.item.title
+
+    @property
+    def progressed_at(self):
+        """Return the date of the last watched episode across all seasons."""
+        dates = [a.progressed_at for a in self.anime_seasons.all() if a.progressed_at]
+        return max(dates) if dates else None
+
+
+_ANIME_MAIN_RELATION_TYPES = frozenset({'sequel', 'prequel'})
+_ANIME_EXTRA_RELATION_TYPES = frozenset({'side_story', 'summary'})
+_ANIME_PARENT_RELATION_TYPES = frozenset({'parent_story', 'full_story'})
+_ANIME_ALL_SERIES_RELATION_TYPES = (
+    _ANIME_MAIN_RELATION_TYPES | _ANIME_EXTRA_RELATION_TYPES | _ANIME_PARENT_RELATION_TYPES
+)
+
+
 class Anime(Media):
     """Model for anime."""
 
     tracker = FieldTracker()
+    related_series = models.ForeignKey(
+        AnimeSeries,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='anime_seasons',
+    )
+
+    @tracker
+    def save(self, *args, **kwargs):
+        """Save the anime instance, resolving series membership if not set."""
+        if self.related_series_id is None:
+            self.related_series = self._get_or_create_series()
+        super().save(*args, **kwargs)
+        if self.tracker.has_changed('status') and self.related_series_id:
+            self._sync_series_status()
+
+    def _sync_series_status(self):
+        """Propagate anime status changes to the parent AnimeSeries."""
+        statuses = set(
+            self.related_series.anime_seasons.values_list('status', flat=True)
+        )
+        if statuses == {Status.COMPLETED.value}:
+            new_status = Status.COMPLETED.value
+        elif Status.IN_PROGRESS.value in statuses or Status.COMPLETED.value in statuses:
+            new_status = Status.IN_PROGRESS.value
+        elif statuses == {Status.PAUSED.value}:
+            new_status = Status.PAUSED.value
+        elif statuses == {Status.DROPPED.value}:
+            new_status = Status.DROPPED.value
+        else:
+            return
+        if new_status != self.related_series.status:
+            AnimeSeries.objects.filter(pk=self.related_series_id).update(status=new_status)
+
+    def _get_or_create_series(self):
+        """Find or create an AnimeSeries for this anime (greedy algorithm).
+
+        1. Global AnimeSeriesLink exists for this item → join.
+        2. Fetch related_anime from provider, filter prequel/sequel.
+        3. Any neighbour already linked → join that series, register self.
+        4. Relations exist but no series yet → create series + links.
+        5. No relations → standalone anime, return None.
+        """
+        # Step 1: global link already exists (created by another user or migration)
+        existing_link = AnimeSeriesLink.objects.filter(anime_item=self.item).first()
+        if existing_link:
+            series, _ = AnimeSeries.objects.get_or_create(
+                user=self.user,
+                item=existing_link.series_item,
+                defaults={'status': self.status},
+            )
+            return series
+
+        # Step 2: fetch related_anime (uses cache — no extra network round-trip
+        # when called right after opening the detail page)
+        metadata = providers.services.get_media_metadata(
+            MediaTypes.ANIME.value,
+            self.item.media_id,
+            self.item.source,
+        )
+        all_related = metadata.get('related', {}).get('related_anime', [])
+
+        # If every series-related entry points back to a parent, this anime is extra
+        # (an OVA, special, or compilation that knows its own parent series).
+        is_self_extra = any(
+            r.get('relation_type') in _ANIME_PARENT_RELATION_TYPES
+            for r in all_related
+        )
+
+        series_related = [
+            r for r in all_related
+            if r.get('relation_type') in _ANIME_ALL_SERIES_RELATION_TYPES
+        ]
+
+        if not series_related:
+            return None
+
+        # Step 3: check if any neighbour is already linked to a series
+        for related in series_related:
+            related_item = Item.objects.filter(
+                media_id=related['media_id'],
+                media_type=MediaTypes.ANIME.value,
+                source=self.item.source,
+            ).first()
+            if related_item:
+                neighbour_link = AnimeSeriesLink.objects.filter(
+                    anime_item=related_item,
+                ).first()
+                if neighbour_link:
+                    AnimeSeriesLink.objects.get_or_create(
+                        series_item=neighbour_link.series_item,
+                        anime_item=self.item,
+                        defaults={'is_extra': is_self_extra},
+                    )
+                    series, _ = AnimeSeries.objects.get_or_create(
+                        user=self.user,
+                        item=neighbour_link.series_item,
+                        defaults={'status': self.status},
+                    )
+                    return series
+
+        # Step 4: no existing series — create one.
+        # Use the earliest-known prequel from DB as the series title/image so
+        # the series name reflects the root, not whichever season was tracked first.
+        series_title, series_image = self._find_series_root(series_related)
+        series_item = Item.objects.create(
+            media_id=str(uuid.uuid4()),
+            source=self.item.source,
+            media_type=MediaTypes.ANIME_SERIES.value,
+            title=series_title,
+            image=series_image,
+        )
+        AnimeSeriesLink.objects.create(
+            series_item=series_item,
+            anime_item=self.item,
+            is_extra=is_self_extra,
+        )
+        for related in series_related:
+            rel_type = related.get('relation_type', '')
+            related_is_extra = rel_type in _ANIME_EXTRA_RELATION_TYPES
+            related_item = Item.objects.filter(
+                media_id=related['media_id'],
+                media_type=MediaTypes.ANIME.value,
+                source=self.item.source,
+            ).first()
+            if related_item:
+                AnimeSeriesLink.objects.get_or_create(
+                    series_item=series_item,
+                    anime_item=related_item,
+                    defaults={'is_extra': related_is_extra},
+                )
+        series, _ = AnimeSeries.objects.get_or_create(
+            user=self.user,
+            item=series_item,
+            defaults={'status': self.status},
+        )
+        return series
+
+    def _find_series_root(self, series_related: list) -> tuple[str, str]:
+        """Return (title, image) of the earliest prequel found in the DB.
+
+        Falls back to the current item's own title/image if no prequel is
+        in the local DB yet (e.g. the user is tracking S2 before S1).
+        """
+        for related in series_related:
+            if related.get('relation_type') != 'prequel':
+                continue
+            prequel_item = Item.objects.filter(
+                media_id=related['media_id'],
+                media_type=MediaTypes.ANIME.value,
+                source=self.item.source,
+            ).first()
+            if prequel_item:
+                return prequel_item.title, prequel_item.image
+        return self.item.title, self.item.image
+
+    def _sync_progress(self):
+        """Sync progress field from WatchedAnimeEpisode count and handle auto-completion."""
+        count = WatchedAnimeEpisode.objects.filter(anime=self).count()
+        Anime.objects.filter(pk=self.pk).update(
+            progress=count,
+            progressed_at=timezone.now(),
+        )
+        total = AnimeEpisode.objects.filter(
+            anime_item=self.item, is_special=False,
+        ).count()
+        if total and count >= total and self.status != Status.COMPLETED.value:
+            now = timezone.now().replace(second=0, microsecond=0)
+            Anime.objects.filter(pk=self.pk).update(
+                status=Status.COMPLETED.value,
+                end_date=now,
+            )
+            self.status = Status.COMPLETED.value
+            if self.related_series_id:
+                self._sync_series_status()
+
+    def _migrate_legacy_progress(self):
+        """Create WatchedAnimeEpisode for episodes 1..progress on first episode page open."""
+        if not self.progress:
+            return
+        if WatchedAnimeEpisode.objects.filter(anime=self).exists():
+            return
+        episodes = list(
+            AnimeEpisode.objects.filter(
+                anime_item=self.item,
+                is_special=False,
+                episode_number__lte=self.progress,
+            ).order_by('episode_number')
+        )
+        if episodes:
+            WatchedAnimeEpisode.objects.bulk_create(
+                [WatchedAnimeEpisode(user=self.user, anime=self, episode=ep) for ep in episodes],
+                ignore_conflicts=True,
+            )
+
+
+class WatchedAnimeEpisode(models.Model):
+    """Per-user watch record for a single anime episode."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    anime = models.ForeignKey(Anime, on_delete=models.CASCADE, related_name='watched_episodes')
+    episode = models.ForeignKey(
+        AnimeEpisode, on_delete=models.CASCADE, related_name='watches',
+    )
+    watched_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Meta options for the model."""
+
+        unique_together = [['anime', 'episode']]
+
+    def __str__(self):
+        """Return human-readable watch record."""
+        return f'{self.user} watched {self.episode}'
 
 
 class Movie(Media):

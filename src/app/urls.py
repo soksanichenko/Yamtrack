@@ -58,6 +58,7 @@ urlpatterns = [
         name="mark_user_messages_shown",
     ),
     path("episode_save", views.episode_save, name="episode_save"),
+    path("anime_episode_toggle", views.anime_episode_toggle, name="anime_episode_toggle"),
     path(
         "history_modal/<source:source>/<media_type:media_type>/<str:media_id>",
         views.history_modal,

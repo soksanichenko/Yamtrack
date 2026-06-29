@@ -1,0 +1,96 @@
+{% extends "admin/base_site.html" %}
+
+{% block title %}Build Anime Series | Admin{% endblock %}
+
+{% block content %}
+<h1>Build Anime Series</h1>
+
+<p>
+  Scans tracked anime for prequel/sequel chains via MAL and proposes AnimeSeries groupings.
+  Dubious relations (alternative adaptations, spin-offs) are flagged for manual review.
+</p>
+
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="user_id" value="{{ selected_user_id }}">
+  <div style="margin-bottom: 16px;">
+    <label for="user_select">Filter by user (optional):</label>
+    <select name="user_id" id="user_select" style="margin-left: 8px;">
+      <option value="">All users</option>
+      {% for user in all_users %}
+        <option value="{{ user.pk }}" {% if user.pk|stringformat:"s" == selected_user_id %}selected{% endif %}>
+          {{ user.username }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+  <button type="submit" name="action" value="dry_run" class="button">
+    Dry Run (preview only)
+  </button>
+  &nbsp;
+  <button type="submit" name="action" value="apply"
+          class="button default"
+          onclick="return confirm('Apply groupings to database?');">
+    Apply
+  </button>
+</form>
+
+{% if report %}
+  <hr>
+  <h2>
+    {% if dry_run %}Proposed{% else %}Applied{% endif %} groupings
+    &mdash;
+    {{ report.groups|length }} group(s),
+    {{ report.errors|length }} error(s),
+    {{ report.standalone|length }} standalone,
+    {{ report.already_linked|length }} already linked
+  </h2>
+
+  {% if report.errors %}
+    <h3 style="color: #ba2121;">Errors</h3>
+    <ul>
+      {% for error in report.errors %}
+        <li style="color: #ba2121;">{{ error }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% for group in report.groups %}
+    <div style="margin: 12px 0; padding: 10px; border-left: 4px solid {% if group.is_dubious %}#c09853{% else %}#3c763d{% endif %}; background: {% if group.is_dubious %}#fcf8e3{% else %}#dff0d8{% endif %};">
+      <strong>
+        {% if group.is_dubious %}⚠{% else %}✓{% endif %}
+        {{ group.root_title }}
+        ({{ group.members|length }} member{{ group.members|length|pluralize }})
+      </strong>
+      <ul style="margin: 6px 0 0 16px;">
+        {% for member in group.members %}
+          <li>
+            {{ member.title }}
+            <span style="color: #888;">(id={{ member.media_id }})</span>
+            {% if member.is_extra %}<em style="color: #8a6d3b;"> extra</em>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+      {% if group.warnings %}
+        <ul style="margin: 6px 0 0 16px; color: #8a6d3b;">
+          {% for warning in group.warnings %}
+            <li>⚠ {{ warning }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  {% endfor %}
+
+  {% if report.already_linked %}
+    <p><em>ℹ Already linked ({{ report.already_linked|length }}):
+      {{ report.already_linked|join:", "|truncatechars:200 }}
+    </em></p>
+  {% endif %}
+
+  {% if report.standalone %}
+    <p><em>ℹ Standalone — no series ({{ report.standalone|length }}):
+      {{ report.standalone|join:", "|truncatechars:200 }}
+    </em></p>
+  {% endif %}
+{% endif %}
+{% endblock %}

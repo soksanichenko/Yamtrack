@@ -69,6 +69,10 @@
         {% include "app/icons/repeat.svg" with classes="w-4 h-4 text-slate-200 mr-1" %}
         <span class="text-sm text-white">{{ media.repeats }}</span>
       </div>
+    {% elif item.media_type == MediaTypes.ANIME_SERIES.value and item.season_count %}
+      <div class="absolute bottom-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md shadow-md">
+        {{ item.season_count }} season{{ item.season_count|pluralize }}
+      </div>
     {% endif %}
 
     {% with user=target_user|default:user %}

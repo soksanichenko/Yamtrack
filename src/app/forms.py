@@ -7,6 +7,7 @@ from app import config
 from app.models import (
     TV,
     Anime,
+    AnimeSeries,
     BoardGame,
     Book,
     Comic,
@@ -255,6 +256,16 @@ class AnimeForm(MediaForm):
         """Bind form to model."""
 
         model = Anime
+
+
+class AnimeseriesForm(MediaForm):
+    """Form for anime series."""
+
+    class Meta(MediaForm.Meta):
+        """Bind form to model."""
+
+        model = AnimeSeries
+        fields = ['score', 'status', 'start_date', 'end_date', 'notes']
 
 
 class MovieForm(MediaForm):

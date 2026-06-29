@@ -62,7 +62,7 @@
         {{ media.formatted_progress }}
         {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
       </td>
-      {% if media_type == MediaTypes.TV.value %}<td class="p-2 text-center">{{ media.last_watched }}</td>{% endif %}
+      {% if media_type == MediaTypes.TV.value or media_type == MediaTypes.ANIME_SERIES.value %}<td class="p-2 text-center">{{ media.last_watched }}</td>{% endif %}
     {% endif %}
 
     <td class="p-2 text-center">{{ media.status|media_status_readable }}</td>

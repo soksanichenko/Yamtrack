@@ -164,6 +164,7 @@ class ExportCSVTest(TestCase):
                 | Q(season__user=self.user)
                 | Q(episode__related_season__user=self.user)
                 | Q(anime__user=self.user)
+                | Q(animeseries__user=self.user)
                 | Q(manga__user=self.user)
                 | Q(game__user=self.user)
                 | Q(book__user=self.user),

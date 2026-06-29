@@ -539,16 +539,24 @@ class MediaManagerTests(TestCase):
         )
         self.assertEqual(media_types, [MediaTypes.ANIME.value])
 
+        # animeseries_enabled=True by default: anime is excluded, animeseries is shown
         media_types = manager._get_media_types_to_process(self.user, None)
-
         self.assertNotIn(MediaTypes.TV.value, media_types)
-        self.assertIn(MediaTypes.ANIME.value, media_types)
+        self.assertNotIn(MediaTypes.ANIME.value, media_types)
+        self.assertIn(MediaTypes.ANIME_SERIES.value, media_types)
         self.assertIn(MediaTypes.MOVIE.value, media_types)
         self.assertIn(MediaTypes.GAME.value, media_types)
         self.assertIn(MediaTypes.BOOK.value, media_types)
         self.assertIn(MediaTypes.MANGA.value, media_types)
 
-        # Disable some media types
+        # With animeseries disabled: anime is shown, animeseries is not
+        self.user.animeseries_enabled = False
+        self.user.save()
+        media_types = manager._get_media_types_to_process(self.user, None)
+        self.assertIn(MediaTypes.ANIME.value, media_types)
+        self.assertNotIn(MediaTypes.ANIME_SERIES.value, media_types)
+
+        # Disable more media types
         self.user.anime_enabled = False
         self.user.manga_enabled = False
         self.user.save()
@@ -589,23 +597,18 @@ class MediaManagerTests(TestCase):
             items_limit=14,
         )
 
+        # animeseries_enabled=True by default: animeseries appears, not anime
         self.assertNotIn(MediaTypes.TV.value, home_status)
+        self.assertNotIn(MediaTypes.ANIME.value, home_status)
         self.assertCountEqual(
             home_status.keys(),
             [
                 MediaTypes.SEASON.value,
                 MediaTypes.MOVIE.value,
-                MediaTypes.ANIME.value,
                 MediaTypes.MANGA.value,
                 MediaTypes.GAME.value,
             ],
         )
-
-        self.assertEqual(home_status[MediaTypes.ANIME.value]["total"], 1)
-        anime = home_status[MediaTypes.ANIME.value]["items"][0]
-        self.assertEqual(anime.max_progress, 14)
-        self.assertIsNotNone(anime.next_event)
-        self.assertEqual(anime.next_event.content_number, 17)
 
         movie = home_status[MediaTypes.MOVIE.value]["items"][0]
         self.assertEqual(movie.max_progress, 1)
