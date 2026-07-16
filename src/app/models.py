@@ -444,11 +444,23 @@ class MediaManager(models.Manager):
                 # parent AnimeSeries entry — don't also list it standalone.
                 media_list = media_list.exclude(related_series__isnull=False)
 
+            annotate_as = media_type
+            if media_type == MediaTypes.ANIME_SERIES.value:
+                # Bucketing uses the series' own (aggregate) status, but the
+                # card itself should show the currently relevant season — its
+                # own image, link and progress — not the parent series.
+                media_list = [
+                    season
+                    for season in (series.current_season for series in media_list)
+                    if season is not None
+                ]
+                annotate_as = MediaTypes.ANIME.value
+
             if not media_list:
                 continue
 
             # Annotate with max_progress and next_event
-            self.annotate_max_progress(media_list, media_type)
+            self.annotate_max_progress(media_list, annotate_as)
             self._annotate_next_event(media_list)
 
             # Sort the media list
@@ -2153,6 +2165,14 @@ class AnimeSeries(Media):
             return ''
         latest = max(seasons_with_progress, key=lambda a: a.progressed_at)
         return latest.item.title
+
+    @property
+    def current_season(self):
+        """Return the most recently progressed season (own image/link/progress)."""
+        seasons = list(self.anime_seasons.all())
+        if not seasons:
+            return None
+        return max(seasons, key=lambda a: a.progressed_at)
 
     @property
     def progressed_at(self):

@@ -61,7 +61,7 @@
     <div class="p-3">
       <a href="{{ media.item|media_url }}"
          class="line-clamp-1 text-center text-sm font-semibold text-white transition duration-300 {% if home_status == Status.PLANNING.value %}hover:text-sky-400{% else %}hover:text-indigo-400{% endif %}"
-         title="{{ media.last_watched|default:media }}">{{ media.last_watched|default:media }}</a>
+         title="{{ media }}">{{ media }}</a>
     </div>
 
     {% if home_status == Status.PLANNING.value %}

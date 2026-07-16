@@ -188,6 +188,24 @@ class AnimeSeriesLastWatchedTest(TestCase):
         )
         self.assertEqual(series.last_watched, '')
 
+    def test_current_season_returns_most_recently_progressed(self):
+        """current_season prefers the season with the latest progressed_at."""
+        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+            pk=self.anime_series.pk,
+        )
+        self.assertEqual(series.current_season.pk, self.a2.pk)
+
+    def test_current_season_none_when_no_seasons(self):
+        """current_season is None when the series has no seasons at all."""
+        empty_series_item = _make_series_item('Empty')
+        anime_series = AnimeSeries.objects.create(
+            item=empty_series_item, user=self.user, status=Status.PLANNING.value,
+        )
+        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+            pk=anime_series.pk,
+        )
+        self.assertIsNone(series.current_season)
+
 
 class BuildRelatedGuardTest(TestCase):
     """Tests for build_related_for_series guard logic."""
@@ -514,12 +532,15 @@ class AnimeSeriesHomeBucketingTest(TestCase):
         anime_items = home_status[MediaTypes.ANIME.value]['items']
         self.assertEqual([m.item_id for m in anime_items], [self.standalone.item_id])
 
-    def test_series_bucketed_by_its_own_status(self):
-        """AnimeSeries appears in Home under its own status, not a season's."""
+    def test_series_bucketed_by_its_own_status_shows_current_season(self):
+        """Bucketed by the series' status, showing its current season's own card."""
         manager = MediaManager()
         home_status = manager.get_home_status(
             user=self.user, status=Status.IN_PROGRESS.value,
             sort_by=HomeSortChoices.UPCOMING, items_limit=14,
         )
-        series_items = home_status[MediaTypes.ANIME_SERIES.value]['items']
-        self.assertEqual([m.item_id for m in series_items], [self.anime_series.item_id])
+        series_section_items = home_status[MediaTypes.ANIME_SERIES.value]['items']
+        self.assertEqual(
+            [m.item_id for m in series_section_items],
+            [self.season1_anime.item_id],
+        )
