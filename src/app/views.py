@@ -79,6 +79,14 @@ def home(request):
             sort_by=sort_by,
             items_limit=items_limit,
         )
+        for media_type, media_list in media_types.items():
+            # Anime seasons within an enabled AnimeSeries are still labeled
+            # "Anime Series" here, mirroring how the section itself groups them.
+            is_anime = media_type == MediaTypes.ANIME.value
+            if is_anime and request.user.animeseries_enabled:
+                media_list["label"] = MediaTypes.ANIME_SERIES.label
+            else:
+                media_list["label"] = app_tags.media_type_readable_plural(media_type)
         home_sections.append(
             {
                 "key": status,

@@ -192,6 +192,25 @@ class HomeViewTests(TestCase):
         self.assertEqual(len(planning_movies["items"]), 1)
         self.assertEqual(planning_movies["items"][0].status, Status.PLANNING.value)
 
+    def test_home_view_anime_section_labeled_by_animeseries_preference(self):
+        """Test the anime section is labeled 'Anime Series' when the feature is on."""
+
+        def get_anime_label(response):
+            sections_by_key = {
+                section["key"]: section
+                for section in response.context["home_sections"]
+            }
+            in_progress = sections_by_key[Status.IN_PROGRESS.value]
+            return in_progress["media_types"][MediaTypes.ANIME.value]["label"]
+
+        response = self.client.get(reverse("home"))
+        self.assertEqual(get_anime_label(response), MediaTypes.ANIME_SERIES.label)
+
+        self.user.animeseries_enabled = False
+        self.user.save()
+        response = self.client.get(reverse("home"))
+        self.assertEqual(get_anime_label(response), MediaTypes.ANIME.label)
+
     def test_home_view_with_sort(self):
         """Test the home view with sorting parameter."""
         response = self.client.get(reverse("home") + "?sort=completion")
