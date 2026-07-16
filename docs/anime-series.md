@@ -125,6 +125,18 @@ Fetches the `num_episodes` field from MAL for each `AnimeSeriesLink` row where `
 
 Use this after first deploying the `total_episodes` field if `AnimeSeriesLink` rows were created by an older version of `build_anime_series`.
 
+#### backfill_anime_series_status
+
+```
+python manage.py backfill_anime_series_status
+```
+
+Recomputes `AnimeSeries.status` for every series from its seasons' current statuses (same aggregate rule as `Anime._sync_series_status`: one completed season plus another not yet started still counts as "in progress" overall). Series are normally kept in sync automatically whenever a season's status changes, but a series seeded before that logic existed, or before a bug fix to it, can be left with a stale status. Safe to re-run — only series whose computed status actually differs are updated.
+
+Run this once after upgrading if you have existing Anime Series data from before this command was introduced.
+
+Also available from the admin as a **Recompute Status** tool page at `/admin/app/animeseries/recompute-status/` (requires `ADMIN_ENABLED`, see below).
+
 ### Configuration
 
 The following environment variables affect Anime Series behaviour:
@@ -133,7 +145,7 @@ The following environment variables affect Anime Series behaviour:
 |---|---|
 | `MAL_API` | MyAnimeList API v2 client ID. Required for search, relation fetching, and episode count backfill. |
 | `SIMKL_API` | Simkl API key. Required for episode metadata fetch on first page open. |
-| `ADMIN_ENABLED` | Set to `true` to enable the Django admin interface. The admin provides read-only views of `SimklMapping`, `AnimeEpisode`, and `WatchedAnimeEpisode`, allows manual adjustment of `AnimeSeriesLink` and `AnimeSeriesRelation` records, and exposes a **Build Series** tool page at `/admin/app/anime/build-series/` where you can run `build_anime_series` (with optional dry-run and per-user filter) directly from the browser. |
+| `ADMIN_ENABLED` | Set to `true` to enable the Django admin interface. The admin provides read-only views of `SimklMapping`, `AnimeEpisode`, and `WatchedAnimeEpisode`, allows manual adjustment of `AnimeSeriesLink` and `AnimeSeriesRelation` records, and exposes a **Build Series** tool page at `/admin/app/anime/build-series/` where you can run `build_anime_series` (with optional dry-run and per-user filter) directly from the browser, and a **Recompute Status** tool page at `/admin/app/animeseries/recompute-status/` for `backfill_anime_series_status`. |
 
 Per-user settings stored in `User` model (configurable via Profile Settings):
 

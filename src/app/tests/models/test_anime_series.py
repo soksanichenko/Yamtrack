@@ -548,6 +548,96 @@ class AnimeSeriesHomeBucketingTest(TestCase):
         )
 
 
+class StatusForTest(TestCase):
+    """Tests for AnimeSeries.status_for."""
+
+    def test_all_completed(self):
+        """All seasons completed means the series is completed."""
+        self.assertEqual(
+            AnimeSeries.status_for({Status.COMPLETED.value}),
+            Status.COMPLETED.value,
+        )
+
+    def test_completed_and_planning_means_in_progress(self):
+        """One season done, the next not started yet: still in progress overall."""
+        self.assertEqual(
+            AnimeSeries.status_for({Status.COMPLETED.value, Status.PLANNING.value}),
+            Status.IN_PROGRESS.value,
+        )
+
+    def test_any_in_progress_means_in_progress(self):
+        """Any season actively being watched means the series is in progress."""
+        self.assertEqual(
+            AnimeSeries.status_for({Status.IN_PROGRESS.value, Status.PLANNING.value}),
+            Status.IN_PROGRESS.value,
+        )
+
+    def test_all_paused(self):
+        """All seasons paused means the series is paused."""
+        self.assertEqual(
+            AnimeSeries.status_for({Status.PAUSED.value}),
+            Status.PAUSED.value,
+        )
+
+    def test_all_dropped(self):
+        """All seasons dropped means the series is dropped."""
+        self.assertEqual(
+            AnimeSeries.status_for({Status.DROPPED.value}),
+            Status.DROPPED.value,
+        )
+
+    def test_no_signal_returns_none(self):
+        """A status mix with no clear signal (e.g. planning + dropped) is left alone."""
+        self.assertIsNone(
+            AnimeSeries.status_for({Status.PLANNING.value, Status.DROPPED.value}),
+        )
+
+    def test_empty_returns_none(self):
+        """No seasons at all means no aggregate status can be computed."""
+        self.assertIsNone(AnimeSeries.status_for(set()))
+
+
+class BackfillAnimeSeriesStatusCommandTest(TestCase):
+    """Tests for the backfill_anime_series_status management command."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='backfill', password='pw')
+        self.series_item = _make_series_item('Stale Series')
+        self.s1 = _make_anime_item('b1', 'Season 1')
+        self.s2 = _make_anime_item('b2', 'Season 2')
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s1, order=1, is_extra=False,
+        )
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s2, order=2, is_extra=False,
+        )
+        # Series stuck at Planning even though both seasons are done tracking-wise.
+        self.anime_series = AnimeSeries.objects.create(
+            item=self.series_item, user=self.user, status=Status.PLANNING.value,
+        )
+        # Bypass save() hooks (bulk_update-style) so the stale status isn't
+        # corrected as a side effect of creating these, mirroring how a builder
+        # backfill can leave a series out of sync.
+        Anime.objects.bulk_create([
+            Anime(
+                item=self.s1, user=self.user,
+                status=Status.COMPLETED.value, related_series=self.anime_series,
+            ),
+            Anime(
+                item=self.s2, user=self.user,
+                status=Status.PLANNING.value, related_series=self.anime_series,
+            ),
+        ])
+
+    def test_recomputes_stale_status(self):
+        """The command corrects a series whose status no longer matches its seasons."""
+        from django.core.management import call_command
+
+        call_command('backfill_anime_series_status')
+        self.anime_series.refresh_from_db()
+        self.assertEqual(self.anime_series.status, Status.IN_PROGRESS.value)
+
+
 class AutoTrackNextSeasonTest(TestCase):
     """Tests for auto-tracking the next main season when one is completed."""
 

@@ -7,10 +7,11 @@ from django.contrib.auth import get_user_model
 from django.shortcuts import render
 from django.urls import path
 
-from app.anime_series_builder import build_anime_series
+from app.anime_series_builder import build_anime_series, recompute_series_statuses
 from app.models import (
     Anime,
     AnimeEpisode,
+    AnimeSeries,
     AnimeSeriesLink,
     AnimeSeriesRelation,
     Episode,
@@ -220,6 +221,39 @@ class AnimeAdmin(MediaAdmin):
             'title': 'Build Anime Series',
         }
         return render(request, 'admin/app/anime/build_series.html', context)
+
+
+@admin.register(AnimeSeries)
+class AnimeSeriesAdmin(MediaAdmin):
+    """Admin for AnimeSeries with a status recompute tool."""
+
+    list_display = ["__str__", "status", "user"]
+
+    def get_urls(self):
+        """Append the recompute-status tool URL."""
+        urls = super().get_urls()
+        extra = [
+            path(
+                'recompute-status/',
+                self.admin_site.admin_view(self.recompute_status_view),
+                name='app_animeseries_recompute_status',
+            ),
+        ]
+        return extra + urls
+
+    def recompute_status_view(self, request):
+        """Render the AnimeSeries status recompute tool page."""
+        result = None
+        if request.method == 'POST':
+            updated, total = recompute_series_statuses()
+            result = {'updated': updated, 'total': total}
+
+        context = {
+            **self.admin_site.each_context(request),
+            'result': result,
+            'title': 'Recompute Anime Series Status',
+        }
+        return render(request, 'admin/app/animeseries/recompute_status.html', context)
 
 
 @admin.register(SimklMapping)

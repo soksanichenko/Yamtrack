@@ -2135,6 +2135,23 @@ class AnimeSeries(Media):
         """Save the AnimeSeries instance, skipping Media progress hooks."""
         super(Media, self).save(*args, **kwargs)
 
+    @staticmethod
+    def status_for(statuses):
+        """Return the aggregate series status for a set of season statuses.
+
+        None means no rule matches (e.g. an empty or mixed-without-signal set)
+        and the series' current status should be left as-is.
+        """
+        if statuses == {Status.COMPLETED.value}:
+            return Status.COMPLETED.value
+        if Status.IN_PROGRESS.value in statuses or Status.COMPLETED.value in statuses:
+            return Status.IN_PROGRESS.value
+        if statuses == {Status.PAUSED.value}:
+            return Status.PAUSED.value
+        if statuses == {Status.DROPPED.value}:
+            return Status.DROPPED.value
+        return None
+
     @property
     def progress(self):
         """Return total episodes watched across all non-extra anime seasons."""
@@ -2215,15 +2232,8 @@ class Anime(Media):
         statuses = set(
             self.related_series.anime_seasons.values_list('status', flat=True)
         )
-        if statuses == {Status.COMPLETED.value}:
-            new_status = Status.COMPLETED.value
-        elif Status.IN_PROGRESS.value in statuses or Status.COMPLETED.value in statuses:
-            new_status = Status.IN_PROGRESS.value
-        elif statuses == {Status.PAUSED.value}:
-            new_status = Status.PAUSED.value
-        elif statuses == {Status.DROPPED.value}:
-            new_status = Status.DROPPED.value
-        else:
+        new_status = AnimeSeries.status_for(statuses)
+        if new_status is None:
             return
         # Compare against the DB, not self.related_series.status: it may be a
         # stale in-memory value (e.g. _track_next_season below saves another

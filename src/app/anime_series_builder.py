@@ -468,3 +468,21 @@ def _find_or_build_series_for_anime(mal_id: str, source: str) -> Item | None:
         .first()
     )
     return link.series_item if link else None
+
+
+def recompute_series_statuses() -> tuple[int, int]:
+    """Recompute AnimeSeries.status for every series from its seasons.
+
+    Returns (updated, total). See AnimeSeries.status_for for the aggregation
+    rule; used by both the management command and the admin view.
+    """
+    updated = 0
+    total = 0
+    for series in AnimeSeries.objects.prefetch_related('anime_seasons'):
+        total += 1
+        statuses = {a.status for a in series.anime_seasons.all()}
+        new_status = AnimeSeries.status_for(statuses)
+        if new_status and new_status != series.status:
+            AnimeSeries.objects.filter(pk=series.pk).update(status=new_status)
+            updated += 1
+    return updated, total

@@ -1,0 +1,26 @@
+{% extends "admin/base_site.html" %}
+
+{% block title %}Recompute Anime Series Status | Admin{% endblock %}
+
+{% block content %}
+<h1>Recompute Anime Series Status</h1>
+
+<p>
+  Recomputes every AnimeSeries' status from its seasons' current statuses (one completed
+  season plus another not yet started still counts as "in progress" overall). Series are
+  normally kept in sync automatically whenever a season's status changes, but a series
+  seeded before that logic existed can be left with a stale status. Safe to re-run.
+</p>
+
+<form method="post">
+  {% csrf_token %}
+  <button type="submit" class="button default">
+    Recompute Now
+  </button>
+</form>
+
+{% if result %}
+  <hr>
+  <h2>Updated {{ result.updated }}/{{ result.total }} series</h2>
+{% endif %}
+{% endblock %}
