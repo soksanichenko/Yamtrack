@@ -468,11 +468,9 @@ class MediaManager(models.Manager):
         if specific_media_type:
             return [specific_media_type]
 
-        # TV is excluded — individual seasons appear instead.
-        # When animeseries is enabled, Anime is excluded too — AnimeSeries appears instead.
-        excluded = {MediaTypes.TV.value}
-        if user.animeseries_enabled:
-            excluded.add(MediaTypes.ANIME.value)
+        # TV and AnimeSeries are excluded — individual seasons/anime entries
+        # (which carry per-item progress) appear instead.
+        excluded = {MediaTypes.TV.value, MediaTypes.ANIME_SERIES.value}
         return [
             media_type
             for media_type in user.get_active_media_types()

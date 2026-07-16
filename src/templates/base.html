@@ -68,7 +68,7 @@
         <aside class="fixed top-0 left-0 z-40 h-screen w-64 bg-[#1a1d20] transform transition-transform duration-300 ease-in-out border-r border-[#2c3136] -translate-x-full lg:translate-x-0 lg:sticky flex flex-col"
                :class="isMobileMenuOpen ? 'translate-x-0' : ''">
           <div class="h-16 border-b border-[#2c3136] flex items-center px-6">
-            <h1 class="text-2xl font-semibold text-gray-100">Yamtrack</h1>
+            <a href="{% url 'home' %}" class="text-2xl font-semibold text-gray-100">Yamtrack</a>
           </div>
           <nav class="p-4 flex-1 overflow-y-auto">
             {% block sidebar_own_media %}
@@ -260,30 +260,32 @@
                         <input type="hidden" name="media_type" :value="selectedType.value">
 
                         {# Media type dropdown #}
-                        <button type="button"
-                                @click="isOpen = !isOpen"
-                                @click.away="isOpen = false"
-                                class="flex items-center justify-between shrink-0 w-28 sm:w-36 px-2 sm:px-3 py-2 text-sm text-gray-300 bg-[#272c31] rounded-r-md focus:outline-none focus:ring-2 focus:ring-[#4a9eff] focus:ring-inset hover:bg-[#2a2e33] transition-colors duration-200 cursor-pointer">
-                          <span class="truncate whitespace-nowrap" x-text="selectedType.display"></span>
-                          {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 ml-1 shrink-0" %}
+                        <div class="relative shrink-0">
+                          <button type="button"
+                                  @click="isOpen = !isOpen"
+                                  @click.away="isOpen = false"
+                                  class="flex items-center justify-between w-28 sm:w-36 px-2 sm:px-3 py-2 text-sm text-gray-300 bg-[#272c31] rounded-r-md focus:outline-none focus:ring-2 focus:ring-[#4a9eff] focus:ring-inset hover:bg-[#2a2e33] transition-colors duration-200 cursor-pointer">
+                            <span class="truncate whitespace-nowrap" x-text="selectedType.display"></span>
+                            {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 ml-1 shrink-0" %}
 
-                        </button>
-                        <ul x-cloak
-                            x-show="isOpen"
-                            @keydown.escape.window="isOpen = false"
-                            x-transition:enter="transition ease-out duration-100"
-                            x-transition:enter-start="transform opacity-0 scale-95"
-                            x-transition:enter-end="transform opacity-100 scale-100"
-                            x-transition:leave="transition ease-in duration-75"
-                            x-transition:leave-start="transform opacity-100 scale-100"
-                            x-transition:leave-end="transform opacity-0 scale-95"
-                            class="absolute z-20 py-1 mt-12 overflow-auto text-sm text-gray-300 bg-[#2a2e33] rounded-md shadow-lg right-0 w-32">
-                          <template x-for="type in mediaTypes" :key="type.value">
-                            <li @click="selectedType = type; isOpen = false"
-                                class="px-4 py-2 cursor-pointer hover:bg-[#343a40] transition duration-150 ease-in-out"
-                                x-text="type.display"></li>
-                          </template>
-                        </ul>
+                          </button>
+                          <ul x-cloak
+                              x-show="isOpen"
+                              @keydown.escape.window="isOpen = false"
+                              x-transition:enter="transition ease-out duration-100"
+                              x-transition:enter-start="transform opacity-0 scale-95"
+                              x-transition:enter-end="transform opacity-100 scale-100"
+                              x-transition:leave="transition ease-in duration-75"
+                              x-transition:leave-start="transform opacity-100 scale-100"
+                              x-transition:leave-end="transform opacity-0 scale-95"
+                              class="absolute z-20 py-1 mt-2 overflow-auto text-sm text-gray-300 bg-[#2a2e33] rounded-md shadow-lg right-0 w-32">
+                            <template x-for="type in mediaTypes" :key="type.value">
+                              <li @click="selectedType = type; isOpen = false"
+                                  class="px-4 py-2 cursor-pointer hover:bg-[#343a40] transition duration-150 ease-in-out"
+                                  x-text="type.display"></li>
+                            </template>
+                          </ul>
+                        </div>
                       </div>
                     </form>
                   </div>
