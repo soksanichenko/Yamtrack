@@ -22,6 +22,12 @@ This page outlines the environment variables used in the YamTrack project.
 
 See [media-imports](media-imports.md).
 
+## Notifications
+
+| Name                 | Notes                                                                                                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN` | Bot token from [BotFather](https://t.me/BotFather) that enables instance-wide Telegram notifications. Unset by default (feature disabled). See [administration](administration.md#telegram-notifications) for setup. |
+
 ## Redis and Django Settings
 
 | Name               | Notes                                                                                                                                                                                                |
@@ -96,6 +102,7 @@ YamTrack supports reading sensitive configuration values from Docker secrets fil
 | `HARDCOVER_API`           | `HARDCOVER_API_FILE`           |
 | `COMICVINE_API`           | `COMICVINE_API_FILE`           |
 | `TRAKT_API`               | `TRAKT_API_FILE`               |
+| `TELEGRAM_BOT_TOKEN`      | `TELEGRAM_BOT_TOKEN_FILE`      |
 | `SIMKL_ID`                | `SIMKL_ID_FILE`                |
 | `SIMKL_SECRET`            | `SIMKL_SECRET_FILE`            |
 | `SOCIALACCOUNT_PROVIDERS` | `SOCIALACCOUNT_PROVIDERS_FILE` |

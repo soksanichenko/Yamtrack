@@ -3,6 +3,7 @@ from datetime import UTC
 
 import apprise
 from django.apps import apps
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
@@ -23,7 +24,7 @@ def send_releases():
     users = (
         get_user_model()
         .objects.filter(
-            ~Q(notification_urls=""),
+            ~Q(notification_urls="") | ~Q(telegram_chat_id=""),
             release_notifications_enabled=True,
         )
         .prefetch_related("notification_excluded_items")
@@ -82,7 +83,7 @@ def send_daily_digest():
     users = (
         get_user_model()
         .objects.filter(
-            ~Q(notification_urls=""),
+            ~Q(notification_urls="") | ~Q(telegram_chat_id=""),
             daily_digest_enabled=True,
         )
         .prefetch_related("notification_excluded_items")
@@ -369,6 +370,20 @@ def is_user_tracking_item(user, item, user_tracking_data):
     return media_obj.status not in INACTIVE_TRACKING_STATUSES
 
 
+def get_effective_notification_urls(user):
+    """Return all Apprise URLs to notify a user on.
+
+    Combines the user's custom Apprise URLs with a Telegram URL derived from
+    the instance-wide bot token and the user's linked chat ID, if any.
+    """
+    urls = [url.strip() for url in user.notification_urls.splitlines() if url.strip()]
+
+    if settings.TELEGRAM_BOT_TOKEN and user.telegram_chat_id:
+        urls.append(f"tgram://{settings.TELEGRAM_BOT_TOKEN}/{user.telegram_chat_id}/")
+
+    return urls
+
+
 def deliver_notifications(user_releases, users, title):
     """Deliver notifications to users using calendar logic.
 
@@ -390,9 +405,7 @@ def deliver_notifications(user_releases, users, title):
             continue
 
         # Get notification URLs for this user
-        urls = [
-            url.strip() for url in user.notification_urls.splitlines() if url.strip()
-        ]
+        urls = get_effective_notification_urls(user)
         if not urls:
             continue
 
