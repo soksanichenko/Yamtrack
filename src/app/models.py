@@ -2225,8 +2225,45 @@ class Anime(Media):
             new_status = Status.DROPPED.value
         else:
             return
-        if new_status != self.related_series.status:
-            AnimeSeries.objects.filter(pk=self.related_series_id).update(status=new_status)
+        # Compare against the DB, not self.related_series.status: it may be a
+        # stale in-memory value (e.g. _track_next_season below saves another
+        # Anime sharing this same related_series instance within the same call).
+        AnimeSeries.objects.filter(pk=self.related_series_id).exclude(
+            status=new_status,
+        ).update(status=new_status)
+
+        if self.status == Status.COMPLETED.value:
+            self._track_next_season()
+
+    def _track_next_season(self):
+        """Start tracking the next main season in the franchise, if not already."""
+        links = list(
+            AnimeSeriesLink.objects.filter(
+                series_item=self.related_series.item,
+                is_extra=False,
+            ).order_by('order')
+        )
+        item_ids = [lnk.anime_item_id for lnk in links]
+        if self.item_id not in item_ids:
+            return
+
+        next_index = item_ids.index(self.item_id) + 1
+        if next_index >= len(links):
+            return
+
+        next_link = links[next_index]
+        if Anime.objects.filter(
+            user=self.user,
+            item_id=next_link.anime_item_id,
+        ).exists():
+            return
+
+        Anime.objects.create(
+            item=next_link.anime_item,
+            user=self.user,
+            status=Status.PLANNING.value,
+            related_series=self.related_series,
+        )
 
     def _get_or_create_series(self):
         """Find or create an AnimeSeries for this anime (greedy algorithm).

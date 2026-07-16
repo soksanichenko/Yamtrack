@@ -154,13 +154,15 @@ class AnimeSeriesLastWatchedTest(TestCase):
             item=self.series_item, user=self.user, status=Status.IN_PROGRESS.value,
         )
         with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
-            self.a1 = Anime.objects.create(
-                item=self.s1, user=self.user,
-                status=Status.COMPLETED.value, related_series=self.anime_series,
-            )
+            # a2 created first: completing a1 below would otherwise auto-track
+            # a placeholder for a2 (see AutoTrackNextSeasonTest), duplicating it.
             self.a2 = Anime.objects.create(
                 item=self.s2, user=self.user,
                 status=Status.IN_PROGRESS.value, related_series=self.anime_series,
+            )
+            self.a1 = Anime.objects.create(
+                item=self.s1, user=self.user,
+                status=Status.COMPLETED.value, related_series=self.anime_series,
             )
         # Set progressed_at directly via update to bypass save() hooks
         Anime.objects.filter(pk=self.a1.pk).update(
@@ -544,3 +546,62 @@ class AnimeSeriesHomeBucketingTest(TestCase):
             [m.item_id for m in series_section_items],
             [self.season1_anime.item_id],
         )
+
+
+class AutoTrackNextSeasonTest(TestCase):
+    """Tests for auto-tracking the next main season when one is completed."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='next_season', password='pw')
+        self.series_item = _make_series_item('Franchise')
+        self.s1 = _make_anime_item('n1', 'Season 1')
+        self.extra = _make_anime_item('n2', 'OVA')
+        self.s2 = _make_anime_item('n3', 'Season 2')
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s1, order=1, is_extra=False,
+        )
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.extra, order=2, is_extra=True,
+        )
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s2, order=3, is_extra=False,
+        )
+        self.anime_series = AnimeSeries.objects.create(
+            item=self.series_item, user=self.user, status=Status.PLANNING.value,
+        )
+
+    def test_completing_season_tracks_next_main_season(self):
+        """Completing season 1 starts tracking season 2, skipping the OVA."""
+        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+            Anime.objects.create(
+                item=self.s1, user=self.user,
+                status=Status.COMPLETED.value, related_series=self.anime_series,
+            )
+
+        next_season = Anime.objects.get(user=self.user, item=self.s2)
+        self.assertEqual(next_season.status, Status.PLANNING.value)
+        self.assertEqual(next_season.progress, 0)
+        self.assertEqual(next_season.related_series_id, self.anime_series.pk)
+        self.assertFalse(Anime.objects.filter(user=self.user, item=self.extra).exists())
+
+    def test_does_not_duplicate_already_tracked_next_season(self):
+        """If the next season is already tracked, no duplicate is created."""
+        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+            Anime.objects.create(
+                item=self.s2, user=self.user,
+                status=Status.PLANNING.value, related_series=self.anime_series,
+            )
+            Anime.objects.create(
+                item=self.s1, user=self.user,
+                status=Status.COMPLETED.value, related_series=self.anime_series,
+            )
+        self.assertEqual(Anime.objects.filter(user=self.user, item=self.s2).count(), 1)
+
+    def test_no_next_season_when_completing_the_last_one(self):
+        """Completing the final season in the franchise creates nothing new."""
+        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+            Anime.objects.create(
+                item=self.s2, user=self.user,
+                status=Status.COMPLETED.value, related_series=self.anime_series,
+            )
+        self.assertEqual(Anime.objects.filter(user=self.user).count(), 1)
