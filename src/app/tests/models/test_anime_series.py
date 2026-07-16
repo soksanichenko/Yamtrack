@@ -20,6 +20,7 @@ from app.models import (
     Status,
 )
 from events.models import Event
+from users.models import HomeSortChoices
 
 # Minimal metadata returned when Anime.save() calls process_progress / process_status
 _ANIME_META_STUB = {
@@ -473,3 +474,52 @@ class LazyBuildFromSearchTest(TestCase):
 
         self.assertEqual(series_item.pk, existing_series.pk)
         self.assertEqual(AnimeSeriesLink.objects.filter(series_item=series_item).count(), 2)
+
+
+class AnimeSeriesHomeBucketingTest(TestCase):
+    """Tests for how get_home_status buckets anime grouped into a series."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='home_bucket', password='pw')
+
+        self.series_item = _make_series_item('My Series')
+        self.season1 = _make_anime_item('h1', 'Season 1')
+        self.standalone_item = _make_anime_item('h2', 'Standalone Anime')
+
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.season1, order=1, is_extra=False,
+        )
+
+        self.anime_series = AnimeSeries.objects.create(
+            item=self.series_item, user=self.user, status=Status.IN_PROGRESS.value,
+        )
+
+        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+            self.season1_anime = Anime.objects.create(
+                item=self.season1, user=self.user,
+                status=Status.IN_PROGRESS.value, related_series=self.anime_series,
+            )
+            self.standalone = Anime.objects.create(
+                item=self.standalone_item, user=self.user,
+                status=Status.IN_PROGRESS.value,
+            )
+
+    def test_grouped_anime_excluded_from_flat_anime_list(self):
+        """Anime linked to a series isn't also listed under the plain Anime bucket."""
+        manager = MediaManager()
+        home_status = manager.get_home_status(
+            user=self.user, status=Status.IN_PROGRESS.value,
+            sort_by=HomeSortChoices.UPCOMING, items_limit=14,
+        )
+        anime_items = home_status[MediaTypes.ANIME.value]['items']
+        self.assertEqual([m.item_id for m in anime_items], [self.standalone.item_id])
+
+    def test_series_bucketed_by_its_own_status(self):
+        """AnimeSeries appears in Home under its own status, not a season's."""
+        manager = MediaManager()
+        home_status = manager.get_home_status(
+            user=self.user, status=Status.IN_PROGRESS.value,
+            sort_by=HomeSortChoices.UPCOMING, items_limit=14,
+        )
+        series_items = home_status[MediaTypes.ANIME_SERIES.value]['items']
+        self.assertEqual([m.item_id for m in series_items], [self.anime_series.item_id])

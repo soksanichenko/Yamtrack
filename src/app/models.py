@@ -439,6 +439,11 @@ class MediaManager(models.Manager):
                 sort_filter=None,
             )
 
+            if media_type == MediaTypes.ANIME.value and user.animeseries_enabled:
+                # Anime already grouped into a series is represented by its
+                # parent AnimeSeries entry — don't also list it standalone.
+                media_list = media_list.exclude(related_series__isnull=False)
+
             if not media_list:
                 continue
 
@@ -468,9 +473,11 @@ class MediaManager(models.Manager):
         if specific_media_type:
             return [specific_media_type]
 
-        # TV and AnimeSeries are excluded — individual seasons/anime entries
-        # (which carry per-item progress) appear instead.
-        excluded = {MediaTypes.TV.value, MediaTypes.ANIME_SERIES.value}
+        # TV is excluded — individual seasons appear instead. Anime is not
+        # excluded: standalone anime still needs its own status, while anime
+        # grouped into a series is filtered out in get_home_status (the series'
+        # aggregate status accounts for "still ongoing between seasons").
+        excluded = {MediaTypes.TV.value}
         return [
             media_type
             for media_type in user.get_active_media_types()

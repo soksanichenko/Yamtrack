@@ -540,11 +540,12 @@ class MediaManagerTests(TestCase):
         )
         self.assertEqual(media_types, [MediaTypes.ANIME.value])
 
-        # animeseries_enabled=True by default: animeseries is excluded, anime is shown
+        # animeseries_enabled=True by default: both anime and animeseries are
+        # processed (get_home_status filters grouped anime out of the flat list)
         media_types = manager._get_media_types_to_process(self.user, None)
         self.assertNotIn(MediaTypes.TV.value, media_types)
-        self.assertNotIn(MediaTypes.ANIME_SERIES.value, media_types)
         self.assertIn(MediaTypes.ANIME.value, media_types)
+        self.assertIn(MediaTypes.ANIME_SERIES.value, media_types)
         self.assertIn(MediaTypes.MOVIE.value, media_types)
         self.assertIn(MediaTypes.GAME.value, media_types)
         self.assertIn(MediaTypes.BOOK.value, media_types)
@@ -598,7 +599,9 @@ class MediaManagerTests(TestCase):
             items_limit=14,
         )
 
-        # animeseries_enabled=True by default: anime appears, animeseries does not
+        # self.anime is standalone (no related_series), so it still appears under
+        # ANIME; ANIME_SERIES is processed but has no data for this user, so it's
+        # absent from the result.
         self.assertNotIn(MediaTypes.TV.value, home_status)
         self.assertNotIn(MediaTypes.ANIME_SERIES.value, home_status)
         self.assertCountEqual(
