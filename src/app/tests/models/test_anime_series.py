@@ -671,10 +671,11 @@ class RecomputeCatchesUpNextSeasonTest(TestCase):
         """Recompute starts tracking season 2 and the series becomes in progress."""
         from django.core.management import call_command
 
-        call_command('backfill_anime_series_status')
+        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+            call_command('backfill_anime_series_status')
 
         season2 = Anime.objects.get(user=self.user, item=self.s2)
-        self.assertEqual(season2.status, Status.PLANNING.value)
+        self.assertEqual(season2.status, Status.IN_PROGRESS.value)
         self.assertEqual(season2.progress, 0)
         self.assertEqual(season2.related_series_id, self.anime_series.pk)
 
@@ -685,8 +686,9 @@ class RecomputeCatchesUpNextSeasonTest(TestCase):
         """Running recompute twice doesn't create a second season-2 entry."""
         from django.core.management import call_command
 
-        call_command('backfill_anime_series_status')
-        call_command('backfill_anime_series_status')
+        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+            call_command('backfill_anime_series_status')
+            call_command('backfill_anime_series_status')
 
         self.assertEqual(Anime.objects.filter(user=self.user, item=self.s2).count(), 1)
 
@@ -722,7 +724,7 @@ class AutoTrackNextSeasonTest(TestCase):
             )
 
         next_season = Anime.objects.get(user=self.user, item=self.s2)
-        self.assertEqual(next_season.status, Status.PLANNING.value)
+        self.assertEqual(next_season.status, Status.IN_PROGRESS.value)
         self.assertEqual(next_season.progress, 0)
         self.assertEqual(next_season.related_series_id, self.anime_series.pk)
         self.assertFalse(Anime.objects.filter(user=self.user, item=self.extra).exists())
@@ -748,3 +750,25 @@ class AutoTrackNextSeasonTest(TestCase):
                 status=Status.COMPLETED.value, related_series=self.anime_series,
             )
         self.assertEqual(Anime.objects.filter(user=self.user).count(), 1)
+
+    def test_provider_failure_tracking_next_season_does_not_break_completion(self):
+        """A provider error auto-tracking the next season doesn't fail the save."""
+
+        def fake_metadata(_media_type, media_id, _source):
+            if media_id == self.s2.media_id:
+                msg = 'provider down'
+                raise Exception(msg)  # noqa: TRY002
+            return _ANIME_META_STUB
+
+        with patch(
+            'app.models.providers.services.get_media_metadata',
+            side_effect=fake_metadata,
+        ):
+            season1 = Anime.objects.create(
+                item=self.s1, user=self.user,
+                status=Status.COMPLETED.value, related_series=self.anime_series,
+            )
+
+        season1.refresh_from_db()
+        self.assertEqual(season1.status, Status.COMPLETED.value)
+        self.assertFalse(Anime.objects.filter(user=self.user, item=self.s2).exists())

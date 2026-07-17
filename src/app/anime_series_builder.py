@@ -522,7 +522,12 @@ def recompute_series_statuses() -> tuple[int, int]:
         total += 1
         original_status = series.status
 
-        _track_next_season_if_completed(series)
+        try:
+            _track_next_season_if_completed(series)
+        except Exception:
+            logger.warning(
+                'Could not auto-track next season for series %s', series.pk,
+            )
         series.refresh_from_db()
 
         statuses = set(series.anime_seasons.values_list('status', flat=True))

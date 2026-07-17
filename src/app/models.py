@@ -2243,7 +2243,15 @@ class Anime(Media):
         ).update(status=new_status)
 
         if self.status == Status.COMPLETED.value:
-            self._track_next_season()
+            try:
+                self._track_next_season()
+            except Exception:
+                # A provider hiccup while auto-tracking the next season
+                # shouldn't fail the save of the season the user just completed.
+                logger.exception(
+                    'Could not auto-track next season after completing %s',
+                    self.pk,
+                )
 
     def _track_next_season(self):
         """Start tracking the next main season in the franchise, if not already."""
@@ -2278,7 +2286,7 @@ class Anime(Media):
         Anime.objects.create(
             item=next_link.anime_item,
             user=user,
-            status=Status.PLANNING.value,
+            status=Status.IN_PROGRESS.value,
             related_series=series,
         )
 
