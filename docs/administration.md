@@ -18,6 +18,8 @@ To access the admin page of the application, follow these steps:
       https://domain.com/admin/
       ```
 
+      Staff users (`is_staff=True`) also see an **Admin** link in the left sidebar, between Settings and Logout.
+
 ## Logging In
 
 To log in to the admin interface, you will need an admin account. You can either change an existing user to have admin privileges or create a new user with those roles.
