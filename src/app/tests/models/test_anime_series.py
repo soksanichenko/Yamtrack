@@ -638,6 +638,59 @@ class BackfillAnimeSeriesStatusCommandTest(TestCase):
         self.assertEqual(self.anime_series.status, Status.IN_PROGRESS.value)
 
 
+class RecomputeCatchesUpNextSeasonTest(TestCase):
+    """Recompute should catch up series whose completion predates auto-tracking."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='catchup', password='pw')
+        self.series_item = _make_series_item('Old Franchise')
+        self.s1 = _make_anime_item('c1', 'Season 1')
+        self.s2 = _make_anime_item('c2', 'Season 2')
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s1, order=1, is_extra=False,
+        )
+        AnimeSeriesLink.objects.create(
+            series_item=self.series_item, anime_item=self.s2, order=2, is_extra=False,
+        )
+        # Series completed and stuck that way: only season 1 was ever tracked,
+        # finished before next-season auto-tracking existed. Season 2's link
+        # already exists in the DB (e.g. discovered by build_anime_series) but
+        # nobody is tracking it yet -- bulk_create bypasses save() hooks so no
+        # auto-tracking fires here, mirroring the pre-fix history.
+        self.anime_series = AnimeSeries.objects.create(
+            item=self.series_item, user=self.user, status=Status.COMPLETED.value,
+        )
+        Anime.objects.bulk_create([
+            Anime(
+                item=self.s1, user=self.user,
+                status=Status.COMPLETED.value, related_series=self.anime_series,
+            ),
+        ])
+
+    def test_recompute_tracks_next_season_and_reopens_series(self):
+        """Recompute starts tracking season 2 and the series becomes in progress."""
+        from django.core.management import call_command
+
+        call_command('backfill_anime_series_status')
+
+        season2 = Anime.objects.get(user=self.user, item=self.s2)
+        self.assertEqual(season2.status, Status.PLANNING.value)
+        self.assertEqual(season2.progress, 0)
+        self.assertEqual(season2.related_series_id, self.anime_series.pk)
+
+        self.anime_series.refresh_from_db()
+        self.assertEqual(self.anime_series.status, Status.IN_PROGRESS.value)
+
+    def test_recompute_is_idempotent(self):
+        """Running recompute twice doesn't create a second season-2 entry."""
+        from django.core.management import call_command
+
+        call_command('backfill_anime_series_status')
+        call_command('backfill_anime_series_status')
+
+        self.assertEqual(Anime.objects.filter(user=self.user, item=self.s2).count(), 1)
+
+
 class AutoTrackNextSeasonTest(TestCase):
     """Tests for auto-tracking the next main season when one is completed."""
 

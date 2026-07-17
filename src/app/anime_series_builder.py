@@ -22,6 +22,7 @@ from app.models import (
     Item,
     MediaTypes,
     Sources,
+    Status,
 )
 
 logger = logging.getLogger(__name__)
@@ -470,19 +471,66 @@ def _find_or_build_series_for_anime(mal_id: str, source: str) -> Item | None:
     return link.series_item if link else None
 
 
+def _track_next_season_if_completed(series: AnimeSeries) -> None:
+    """Start tracking the next main season if the last tracked one is done.
+
+    Catches up series whose last completion predates automatic next-season
+    tracking (Anime._track_next_season), which only fires on new saves.
+    """
+    links = list(
+        AnimeSeriesLink.objects.filter(
+            series_item=series.item,
+            is_extra=False,
+        ).order_by('order')
+    )
+    if not links:
+        return
+    item_ids = [lnk.anime_item_id for lnk in links]
+
+    tracked_statuses = dict(
+        Anime.objects.filter(
+            user=series.user,
+            item_id__in=item_ids,
+        ).values_list('item_id', 'status')
+    )
+    last_tracked_index = None
+    for index, item_id in enumerate(item_ids):
+        if item_id in tracked_statuses:
+            last_tracked_index = index
+
+    if last_tracked_index is None:
+        return
+    if tracked_statuses[item_ids[last_tracked_index]] != Status.COMPLETED.value:
+        return
+
+    Anime._track_season_after(
+        series, series.user, links, last_tracked_index,
+    )
+
+
 def recompute_series_statuses() -> tuple[int, int]:
     """Recompute AnimeSeries.status for every series from its seasons.
 
-    Returns (updated, total). See AnimeSeries.status_for for the aggregation
-    rule; used by both the management command and the admin view.
+    Also starts tracking the next main season if the last tracked one is
+    completed (see _track_next_season_if_completed). Returns (updated,
+    total). See AnimeSeries.status_for for the aggregation rule; used by
+    both the management command and the admin view.
     """
     updated = 0
     total = 0
-    for series in AnimeSeries.objects.prefetch_related('anime_seasons'):
+    for series in AnimeSeries.objects.all():
         total += 1
-        statuses = {a.status for a in series.anime_seasons.all()}
+        original_status = series.status
+
+        _track_next_season_if_completed(series)
+        series.refresh_from_db()
+
+        statuses = set(series.anime_seasons.values_list('status', flat=True))
         new_status = AnimeSeries.status_for(statuses)
         if new_status and new_status != series.status:
             AnimeSeries.objects.filter(pk=series.pk).update(status=new_status)
+            series.status = new_status
+
+        if series.status != original_status:
             updated += 1
     return updated, total

@@ -2257,22 +2257,29 @@ class Anime(Media):
         if self.item_id not in item_ids:
             return
 
-        next_index = item_ids.index(self.item_id) + 1
+        Anime._track_season_after(
+            self.related_series,
+            self.user,
+            links,
+            item_ids.index(self.item_id),
+        )
+
+    @staticmethod
+    def _track_season_after(series, user, links, current_index):
+        """Start tracking the season right after current_index, if not already."""
+        next_index = current_index + 1
         if next_index >= len(links):
             return
 
         next_link = links[next_index]
-        if Anime.objects.filter(
-            user=self.user,
-            item_id=next_link.anime_item_id,
-        ).exists():
+        if Anime.objects.filter(user=user, item_id=next_link.anime_item_id).exists():
             return
 
         Anime.objects.create(
             item=next_link.anime_item,
-            user=self.user,
+            user=user,
             status=Status.PLANNING.value,
-            related_series=self.related_series,
+            related_series=series,
         )
 
     def _get_or_create_series(self):
