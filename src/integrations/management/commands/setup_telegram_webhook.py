@@ -13,7 +13,7 @@ class Command(BaseCommand):
 
     help = "Register the Telegram bot webhook for this instance"
 
-    def handle(self, *args, **options):
+    def handle(self, *_args, **_options):
         """Call Telegram's setWebhook with this instance's public webhook URL."""
         if not settings.TELEGRAM_BOT_TOKEN:
             msg = "TELEGRAM_BOT_TOKEN is not configured."
