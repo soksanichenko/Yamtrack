@@ -2,7 +2,8 @@ from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.messages import get_messages
-from django.test import TestCase
+from django.core.cache import cache
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from app.models import Item, MediaTypes, Sources
@@ -217,3 +218,54 @@ class NotificationTests(TestCase):
         messages = list(get_messages(response.wsgi_request))
         self.assertEqual(len(messages), 1)
         self.assertIn("Failed", str(messages[0]))
+
+    @override_settings(TELEGRAM_BOT_TOKEN="")
+    def test_telegram_connect_disabled(self):
+        """Test connect is refused when no bot token is configured."""
+        response = self.client.post(reverse("telegram_connect"))
+
+        self.assertRedirects(response, reverse("notifications"))
+
+        messages = list(get_messages(response.wsgi_request))
+        self.assertEqual(len(messages), 1)
+        self.assertIn("not configured", str(messages[0]))
+
+    @override_settings(TELEGRAM_BOT_TOKEN="test-token")  # noqa: S106
+    @patch("integrations.telegram.get_bot_username")
+    def test_telegram_connect_success(self, mock_get_bot_username):
+        """Test connect redirects to the bot's deep link with a linking code."""
+        mock_get_bot_username.return_value = "yamtrack_bot"
+
+        response = self.client.post(reverse("telegram_connect"))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith("https://t.me/yamtrack_bot?start="))
+
+        code = response.url.split("start=")[1]
+        self.assertEqual(cache.get(f"telegram_link:{code}"), self.user.id)
+
+    @override_settings(TELEGRAM_BOT_TOKEN="test-token")  # noqa: S106
+    @patch("integrations.telegram.get_bot_username")
+    def test_telegram_connect_unreachable(self, mock_get_bot_username):
+        """Test connect fails gracefully if the bot username can't be resolved."""
+        mock_get_bot_username.return_value = None
+
+        response = self.client.post(reverse("telegram_connect"))
+
+        self.assertRedirects(response, reverse("notifications"))
+
+        messages = list(get_messages(response.wsgi_request))
+        self.assertEqual(len(messages), 1)
+        self.assertIn("Could not reach Telegram", str(messages[0]))
+
+    def test_telegram_disconnect(self):
+        """Test disconnect clears the linked chat ID."""
+        self.user.telegram_chat_id = "12345"
+        self.user.save()
+
+        response = self.client.post(reverse("telegram_disconnect"))
+
+        self.assertRedirects(response, reverse("notifications"))
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.telegram_chat_id, "")

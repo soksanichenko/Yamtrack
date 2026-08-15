@@ -11,6 +11,7 @@ from events.models import Event
 from events.notifications import (
     format_notification,
     get_all_user_tracking_data,
+    get_effective_notification_urls,
     get_tv_tracking_data,
     get_user_releases,
     is_user_tracking_item,
@@ -1148,3 +1149,53 @@ class NotificationTests(TestCase):
 
         # Verify the result message
         self.assertEqual(result, "Daily digest sent for 5 releases")
+
+
+@override_settings(TELEGRAM_BOT_TOKEN="test-bot-token")  # noqa: S106
+class EffectiveNotificationUrlsTests(TestCase):
+    """Tests for get_effective_notification_urls."""
+
+    def setUp(self):
+        """Set up test data."""
+        credentials = {"username": "telegramuser", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**credentials)
+
+    def test_combines_custom_urls_and_telegram(self):
+        """Test both custom Apprise URLs and the derived Telegram URL are returned."""
+        self.user.notification_urls = "https://example.com/notify"
+        self.user.telegram_chat_id = "555444333"
+
+        urls = get_effective_notification_urls(self.user)
+
+        self.assertIn("https://example.com/notify", urls)
+        self.assertIn("tgram://test-bot-token/555444333/", urls)
+
+    def test_no_telegram_url_without_chat_id(self):
+        """Test the Telegram URL is omitted when the user hasn't linked an account."""
+        self.user.notification_urls = "https://example.com/notify"
+
+        urls = get_effective_notification_urls(self.user)
+
+        self.assertEqual(urls, ["https://example.com/notify"])
+
+    @override_settings(TELEGRAM_BOT_TOKEN="")
+    def test_no_telegram_url_without_instance_bot(self):
+        """Test the Telegram URL is omitted when the instance has no bot configured."""
+        self.user.telegram_chat_id = "555444333"
+
+        urls = get_effective_notification_urls(self.user)
+
+        self.assertEqual(urls, [])
+
+    def test_telegram_only_user_is_picked_up_by_release_filter(self):
+        """Test a Telegram-only user is queried for release notifications."""
+        self.user.telegram_chat_id = "555444333"
+        self.user.release_notifications_enabled = True
+        self.user.save()
+
+        users = get_user_model().objects.filter(
+            ~models.Q(notification_urls="") | ~models.Q(telegram_chat_id=""),
+            release_notifications_enabled=True,
+        )
+
+        self.assertIn(self.user, users)
