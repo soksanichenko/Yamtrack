@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("users", "0057_animeseries_user_fields"),
+        ("users", "0055_user_jellyfin_mark_events"),
     ]
 
     operations = [
