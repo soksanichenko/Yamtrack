@@ -199,6 +199,10 @@ if config("DB_HOST", default=None):
             "USER": config("DB_USER", default=secret("DB_USER_FILE")),
             "PASSWORD": config("DB_PASSWORD", default=secret("DB_PASSWORD_FILE")),
             "PORT": config("DB_PORT"),
+            # With "pool", Django only passes psycopg_pool's check_connection
+            # when this is set; without it a PostgreSQL restart leaves dead
+            # connections in the pool and requests fail until they're evicted.
+            "CONN_HEALTH_CHECKS": True,
             "OPTIONS": {
                 "pool": True,
             },
