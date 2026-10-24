@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_not_required
+from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import redirect
@@ -18,7 +19,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 import users
 from app import helpers as app_helpers
-from integrations import exports, tasks
+from integrations import exports, tasks, telegram
 from integrations.imports import anilist, helpers, simkl, trakt
 from integrations.webhooks import emby, jellyfin, plex
 
@@ -564,4 +565,51 @@ def emby_webhook(request, token):
     payload = json.loads(data)
     processor = emby.EmbyWebhookProcessor()
     processor.process_payload(payload, user)
+    return HttpResponse(status=200)
+
+
+@login_not_required
+@csrf_exempt
+@require_POST
+def telegram_webhook(request):
+    """Handle incoming Telegram bot updates, linking accounts on /start."""
+    if not telegram.verify_webhook_secret(
+        request.headers.get("X-Telegram-Bot-Api-Secret-Token"),
+    ):
+        logger.warning("Rejected Telegram webhook request: invalid secret token")
+        return HttpResponse(status=403)
+
+    try:
+        update = json.loads(request.body)
+    except (json.JSONDecodeError, TypeError):
+        return HttpResponse(status=200)
+
+    message = update.get("message", {})
+    text = message.get("text", "")
+    if not text.startswith("/start "):
+        return HttpResponse(status=200)
+
+    code = text.removeprefix("/start ").strip()
+    user_id = cache.get(f"telegram_link:{code}")
+    if not user_id:
+        logger.warning("Telegram /start with unknown or expired linking code")
+        return HttpResponse(status=200)
+
+    cache.delete(f"telegram_link:{code}")
+
+    try:
+        user = users.models.User.objects.get(id=user_id)
+    except ObjectDoesNotExist:
+        logger.warning("Telegram linking code matched missing user %s", user_id)
+        return HttpResponse(status=200)
+
+    chat_id = str(message["chat"]["id"])
+    user.telegram_chat_id = chat_id
+    user.save(update_fields=["telegram_chat_id"])
+
+    telegram.send_message(
+        chat_id,
+        "✅ Yamtrack is now connected. You'll receive your notifications here.",
+    )
+
     return HttpResponse(status=200)

@@ -50,4 +50,9 @@ urlpatterns = [
         views.emby_webhook,
         name="emby_webhook",
     ),
+    path(
+        "webhook/telegram/",
+        views.telegram_webhook,
+        name="telegram_webhook",
+    ),
 ]

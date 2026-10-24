@@ -17,6 +17,8 @@ urlpatterns = [
         name="include_notification_item",
     ),
     path("test_notification", views.test_notification, name="test_notification"),
+    path("telegram_connect", views.telegram_connect, name="telegram_connect"),
+    path("telegram_disconnect", views.telegram_disconnect, name="telegram_disconnect"),
     path("settings/preferences", views.preferences, name="preferences"),
     path("settings/integrations", views.integrations, name="integrations"),
     path("settings/import", views.import_data, name="import_data"),

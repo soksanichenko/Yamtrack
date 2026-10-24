@@ -1,4 +1,5 @@
 import logging
+import secrets
 
 import apprise
 from django.conf import settings
@@ -14,6 +15,8 @@ from django_celery_beat.models import PeriodicTask
 
 from app.models import Item, MediaTypes
 from app.providers import tmdb
+from events.notifications import get_effective_notification_urls
+from integrations import telegram
 from users.forms import NotificationSettingsForm, PasswordChangeForm, UserUpdateForm
 from users.models import (
     DateFormatChoices,
@@ -109,6 +112,36 @@ def notifications(request):
     )
 
 
+@require_POST
+def telegram_connect(request):
+    """Generate a one-time linking code and redirect to the bot's deep link."""
+    if not settings.TELEGRAM_BOT_TOKEN:
+        messages.error(
+            request,
+            "Telegram notifications are not configured on this instance.",
+        )
+        return redirect("notifications")
+
+    bot_username = telegram.get_bot_username()
+    if not bot_username:
+        messages.error(request, "Could not reach Telegram. Please try again later.")
+        return redirect("notifications")
+
+    code = secrets.token_urlsafe(16)
+    cache.set(f"telegram_link:{code}", request.user.id, timeout=300)
+
+    return redirect(f"https://t.me/{bot_username}?start={code}")
+
+
+@require_POST
+def telegram_disconnect(request):
+    """Unlink the user's Telegram account."""
+    request.user.telegram_chat_id = ""
+    request.user.save(update_fields=["telegram_chat_id"])
+    messages.success(request, "Telegram disconnected.")
+    return redirect("notifications")
+
+
 @require_GET
 def search_items(request):
     """Search for items to exclude from notifications."""
@@ -183,11 +216,7 @@ def test_notification(request):
         apobj = apprise.Apprise()
 
         # Add all notification URLs
-        notification_urls = [
-            url.strip()
-            for url in request.user.notification_urls.splitlines()
-            if url.strip()
-        ]
+        notification_urls = get_effective_notification_urls(request.user)
         if not notification_urls:
             messages.error(request, "No notification URLs configured.")
             return redirect("notifications")

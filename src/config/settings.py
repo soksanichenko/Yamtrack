@@ -454,6 +454,14 @@ TRAKT_API_SECRET = config(
     ),
 )
 
+TELEGRAM_BOT_TOKEN = config(
+    "TELEGRAM_BOT_TOKEN",
+    default=secret(
+        "TELEGRAM_BOT_TOKEN_FILE",
+        "",
+    ),
+)
+
 ANILIST_ID = config(
     "ANILIST_ID",
     default=secret(

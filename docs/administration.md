@@ -63,3 +63,33 @@ Here, you can view and edit data. For example, to edit an item image:
 1. Click on the **Items** entry.
 2. You will see a list of items. Click on the specific item you want to change.
 3. In the item detail view, you can update the image URL in the corresponding field.
+
+## Telegram Notifications
+
+YamTrack can send notifications through a Telegram bot shared by the whole instance,
+so users only need to click "Connect" instead of creating their own bot. This is in
+addition to the per-user Apprise notification URLs, which keep working as before.
+
+1. **Create a bot**: Message [@BotFather](https://t.me/BotFather) on Telegram, run
+   `/newbot`, and follow the prompts to get a bot token.
+
+2. **Set the environment variable**:
+
+      ```bash
+      TELEGRAM_BOT_TOKEN=your-bot-token
+      ```
+
+      For related settings, see [env-variables](env-variables.md).
+
+3. **Register the webhook**: After (re)starting YamTrack with the token set, run:
+
+      ```bash
+      docker exec -it yamtrack python manage.py setup_telegram_webhook
+      ```
+
+      This requires `URLS` or `BASE_URL` to be configured with a public HTTPS address,
+      since Telegram needs to be able to reach this instance to deliver updates.
+
+4. **Users connect their account**: In **Settings → Notifications**, users click
+   **Connect Telegram** and press Start in the chat that opens. No bot token or chat ID
+   entry is needed on their end.

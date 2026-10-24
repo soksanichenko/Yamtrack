@@ -126,6 +126,36 @@
       </form>
     </div>
 
+    {% if TELEGRAM_ENABLED %}
+      {# Telegram Connect #}
+      <div class="bg-[#2a2f35] rounded-lg p-6">
+        <div class="flex items-center mb-4">
+          {% include "app/icons/bell.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
+          <h2 class="text-xl font-semibold">Telegram</h2>
+        </div>
+
+        {% if user.telegram_chat_id %}
+          <p class="text-gray-400 mb-4 text-sm">Your Telegram account is connected. You'll receive notifications there.</p>
+          <form method="post" action="{% url 'telegram_disconnect' %}">
+            {% csrf_token %}
+            <button type="submit"
+                    class="flex items-center px-4 py-2 bg-[#39404b] text-white rounded-md hover:bg-[#454d5a] transition-colors text-sm cursor-pointer">
+              Disconnect Telegram
+            </button>
+          </form>
+        {% else %}
+          <p class="text-gray-400 mb-4 text-sm">Connect your Telegram account to receive notifications from this instance's bot, with no setup required on your end.</p>
+          <form method="post" action="{% url 'telegram_connect' %}">
+            {% csrf_token %}
+            <button type="submit"
+                    class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+              Connect Telegram
+            </button>
+          </form>
+        {% endif %}
+      </div>
+    {% endif %}
+
     {# Excluded Media Items #}
     <div class="bg-[#2a2f35] rounded-lg p-6">
       <div class="flex items-center mb-5">
