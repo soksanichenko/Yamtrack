@@ -44,6 +44,10 @@ RUN apk add --no-cache nginx shadow \
     && mkdir -p /var/log/nginx \
     && mkdir -p /var/lib/nginx/body
 
+# The pip bundled in the base image lags behind its security fixes. It is only
+# the system pip; the app runs from the virtualenv below, which has none.
+RUN python -m pip install --no-cache-dir --upgrade pip
+
 # Copy the pre-built virtualenv from the builder stage
 COPY --from=builder /yamtrack/.venv /yamtrack/.venv
 
