@@ -35,7 +35,8 @@ jobs:
   test:
     needs: check-workflow-changes
     if: always()
-    runs-on: ubuntu-latest
+    # Playwright has no chromium build for ubuntu-26.04, which ubuntu-latest now resolves to.
+    runs-on: ubuntu-24.04
     strategy:
       max-parallel: 4
       matrix:
