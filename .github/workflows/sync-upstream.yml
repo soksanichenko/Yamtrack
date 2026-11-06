@@ -1,0 +1,112 @@
+---
+name: Sync upstream
+
+# Merges FuzzyGrim/Yamtrack `dev` into the fork's default branch through a PR.
+# A clean merge opens (or updates) the PR `sync/upstream`; a conflict opens an
+# issue instead, to be resolved by hand. Nothing is ever pushed to the default
+# branch directly.
+#
+# Secret SYNC_TOKEN (optional but recommended): a PAT with `repo` and `workflow`
+# scopes. Without it the workflow falls back to GITHUB_TOKEN, which cannot push
+# commits that change .github/workflows/ (upstream does that regularly) and
+# whose PRs do not trigger CI.
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: https://github.com/FuzzyGrim/Yamtrack.git
+  UPSTREAM_BRANCH: dev
+  SYNC_BRANCH: sync/upstream
+  GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the default branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Fetch upstream
+        id: fetch
+        run: |
+          git remote add upstream "$UPSTREAM"
+          git fetch --quiet upstream "$UPSTREAM_BRANCH"
+          behind=$(git rev-list --count "HEAD..upstream/$UPSTREAM_BRANCH")
+          echo "behind=$behind" >> "$GITHUB_OUTPUT"
+          echo "The default branch is $behind upstream commit(s) behind."
+
+      - name: Merge upstream
+        id: merge
+        if: steps.fetch.outputs.behind != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "$SYNC_BRANCH"
+          if git merge --no-edit \
+            -m "Merge upstream FuzzyGrim/Yamtrack $UPSTREAM_BRANCH into ${GITHUB_REF_NAME}" \
+            "upstream/$UPSTREAM_BRANCH"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "conflict=true"
+              echo "files<<EOF"
+              git diff --name-only --diff-filter=U
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            git merge --abort
+          fi
+
+      - name: Push the sync branch and open or update the PR
+        if: steps.merge.outputs.conflict == 'false'
+        run: |
+          git push --force-with-lease origin "$SYNC_BRANCH"
+          existing=$(gh pr list --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "PR #$existing already open; its branch was updated."
+          else
+            gh pr create --head "$SYNC_BRANCH" --base "$GITHUB_REF_NAME" \
+              --title "Merge upstream FuzzyGrim/Yamtrack $UPSTREAM_BRANCH" \
+              --body "$(printf '%s\n' \
+                "Automatic merge of \`FuzzyGrim/Yamtrack:$UPSTREAM_BRANCH\` (${{ steps.fetch.outputs.behind }} new commit(s))." \
+                "" \
+                "- Merge it with a **merge commit** (not squash), so Git remembers the sync point." \
+                "- \`check-workflow-changes\` fails when the merge touches \`.github/workflows/\`; that is expected here." \
+                "- Check \`uv.lock\` did not move any package backwards (security fixes)." \
+              )"
+          fi
+
+      - name: Open an issue about the conflict
+        if: steps.merge.outputs.conflict == 'true'
+        env:
+          FILES: ${{ steps.merge.outputs.files }}
+        run: |
+          title="Upstream sync needs a manual merge"
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number')
+          body=$(printf '%s\n' \
+            "Merging \`FuzzyGrim/Yamtrack:$UPSTREAM_BRANCH\` into \`$GITHUB_REF_NAME\` conflicts in:" \
+            "" \
+            "$(printf '%s\n' "$FILES" | sed 's/^/- `/; s/$/`/')" \
+            "" \
+            "Run: \`git fetch https://github.com/FuzzyGrim/Yamtrack.git $UPSTREAM_BRANCH && git merge FETCH_HEAD\`," \
+            "resolve the conflicts, run the tests and open a PR. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
+...
