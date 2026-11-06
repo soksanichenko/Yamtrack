@@ -265,7 +265,7 @@ class AnimeseriesForm(MediaForm):
         """Bind form to model."""
 
         model = AnimeSeries
-        fields = ['score', 'status', 'start_date', 'end_date', 'notes']
+        fields = ["score", "status", "start_date", "end_date", "notes"]
 
 
 class MovieForm(MediaForm):

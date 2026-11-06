@@ -91,41 +91,41 @@ def search(media_type, query, page):
 
 
 def search_animeseries(query: str, page: int) -> list[dict]:
-    """Search anime returning basic fields only (MAL search ignores extra fields requests)."""
+    """Search anime returning basic fields only (MAL ignores extra field requests)."""
     cache_key = f"search_animeseries_{Sources.MAL.value}_{query}_{page}"
     data = cache.get(cache_key)
 
     if data is None:
         url = f"{base_url}/anime"
         params = {
-            'q': query,
-            'fields': 'media_type,start_date',
-            'limit': settings.PER_PAGE,
+            "q": query,
+            "fields": "media_type,start_date",
+            "limit": settings.PER_PAGE,
         }
         if settings.MAL_NSFW:
-            params['nsfw'] = 'true'
+            params["nsfw"] = "true"
 
         try:
             response = services.api_request(
                 Sources.MAL.value,
-                'GET',
+                "GET",
                 url,
                 params=params,
-                headers={'X-MAL-CLIENT-ID': settings.MAL_API},
+                headers={"X-MAL-CLIENT-ID": settings.MAL_API},
             )
         except requests.exceptions.HTTPError as error:
             response = handle_error(error)
 
         data = [
             {
-                'media_id': media['node']['id'],
-                'source': Sources.MAL.value,
-                'media_type': MediaTypes.ANIME.value,
-                'title': media['node']['title'],
-                'image': get_image_url(media['node']),
-                'start_date': media['node'].get('start_date'),
+                "media_id": media["node"]["id"],
+                "source": Sources.MAL.value,
+                "media_type": MediaTypes.ANIME.value,
+                "title": media["node"]["title"],
+                "image": get_image_url(media["node"]),
+                "start_date": media["node"].get("start_date"),
             }
-            for media in response.get('data', [])
+            for media in response.get("data", [])
         ]
 
         cache.set(cache_key, data)
@@ -134,7 +134,7 @@ def search_animeseries(query: str, page: int) -> list[dict]:
 
 
 def get_relations_and_date(media_id: str) -> dict:
-    """Fetch related_anime, start_date and num_episodes for a given anime (lightweight, cached)."""
+    """Fetch related_anime, start_date and num_episodes for an anime (cached)."""
     cache_key = f"relations_{Sources.MAL.value}_{media_id}"
     data = cache.get(cache_key)
 
@@ -143,24 +143,24 @@ def get_relations_and_date(media_id: str) -> dict:
         try:
             response = services.api_request(
                 Sources.MAL.value,
-                'GET',
+                "GET",
                 url,
-                params={'fields': 'related_anime,start_date,num_episodes'},
-                headers={'X-MAL-CLIENT-ID': settings.MAL_API},
+                params={"fields": "related_anime,start_date,num_episodes"},
+                headers={"X-MAL-CLIENT-ID": settings.MAL_API},
             )
         except requests.exceptions.HTTPError as error:
             raise services.ProviderAPIError(Sources.MAL.value, error) from error
 
         data = {
-            'start_date': response.get('start_date'),
-            'num_episodes': response.get('num_episodes') or None,
-            'related_anime': [
+            "start_date": response.get("start_date"),
+            "num_episodes": response.get("num_episodes") or None,
+            "related_anime": [
                 {
-                    'media_id': r['node']['id'],
-                    'title': r['node']['title'],
-                    'relation_type': r['relation_type'],
+                    "media_id": r["node"]["id"],
+                    "title": r["node"]["title"],
+                    "relation_type": r["relation_type"],
                 }
-                for r in response.get('related_anime', [])
+                for r in response.get("related_anime", [])
             ],
         }
         cache.set(cache_key, data)

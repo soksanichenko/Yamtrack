@@ -51,7 +51,8 @@ class IntegrationTest(StaticLiveServerTestCase):
         expect(self.page.get_by_role("main")).to_contain_text("Season 1")
         self.page.locator(".p-2").first.click()
         expect(self.page.get_by_role("main")).to_contain_text("Track Episode")
-        self.page.locator(".relative > .px-2").first.click()
+        # Scoped to the modal: the navbar search dropdown also matches ".px-2"
+        self.page.locator(".inline-flex.relative > .px-2").first.click()
         self.page.get_by_role("button", name="Fill in air date").click()
         self.page.get_by_role("button", name="Add watch").click()
 

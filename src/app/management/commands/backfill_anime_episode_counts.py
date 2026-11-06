@@ -1,10 +1,11 @@
 """Backfill AnimeSeriesLink.total_episodes from MAL metadata."""
+
 import logging
 
 from django.core.management.base import BaseCommand
 
-from app.models import AnimeSeriesLink, MediaTypes
 from app import providers
+from app.models import AnimeSeriesLink, MediaTypes
 
 logger = logging.getLogger(__name__)
 
@@ -12,16 +13,16 @@ logger = logging.getLogger(__name__)
 class Command(BaseCommand):
     """Populate total_episodes for existing AnimeSeriesLink rows."""
 
-    help = 'Backfill AnimeSeriesLink.total_episodes from MAL metadata'
+    help = "Backfill AnimeSeriesLink.total_episodes from MAL metadata"
 
-    def handle(self, *args, **options):
+    def handle(self, *_args, **_options):
         """Run the backfill."""
         qs = AnimeSeriesLink.objects.filter(
             total_episodes__isnull=True,
-        ).select_related('anime_item')
+        ).select_related("anime_item")
 
         total = qs.count()
-        self.stdout.write(f'Backfilling {total} links...')
+        self.stdout.write(f"Backfilling {total} links...")
 
         updated = 0
         for link in qs.iterator():
@@ -32,13 +33,15 @@ class Command(BaseCommand):
                     str(item.media_id),
                     item.source,
                 )
-            except Exception:
-                logger.warning('Could not fetch metadata for anime %s', item.media_id)
+            except Exception:  # noqa: BLE001
+                logger.warning("Could not fetch metadata for anime %s", item.media_id)
                 continue
 
-            ep_count = meta.get('max_progress')
+            ep_count = meta.get("max_progress")
             if ep_count:
-                AnimeSeriesLink.objects.filter(pk=link.pk).update(total_episodes=ep_count)
+                AnimeSeriesLink.objects.filter(pk=link.pk).update(
+                    total_episodes=ep_count
+                )
                 updated += 1
 
-        self.stdout.write(self.style.SUCCESS(f'Updated {updated}/{total} links'))
+        self.stdout.write(self.style.SUCCESS(f"Updated {updated}/{total} links"))

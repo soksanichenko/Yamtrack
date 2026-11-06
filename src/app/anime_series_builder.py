@@ -2,6 +2,7 @@
 
 Used by both the management command and the admin view.
 """
+
 from __future__ import annotations
 
 import logging
@@ -10,18 +11,16 @@ from dataclasses import dataclass, field
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-
 from django.db.models import Q
 
 from app import providers
 from app.models import (
     Anime,
+    AnimeSeries,
     AnimeSeriesLink,
     AnimeSeriesRelation,
-    AnimeSeries,
     Item,
     MediaTypes,
-    Sources,
     Status,
 )
 
@@ -30,15 +29,17 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 # Main series entries — sequel/prequel chain
-_MAIN_RELATION_TYPES = frozenset({'sequel', 'prequel'})
+_MAIN_RELATION_TYPES = frozenset({"sequel", "prequel"})
 # Extra content reached FROM a main entry (OVA, specials, compilations)
-_EXTRA_RELATION_TYPES = frozenset({'side_story', 'summary'})
+_EXTRA_RELATION_TYPES = frozenset({"side_story", "summary"})
 # Main content reached FROM an extra entry (OVA points back to its parent)
-_PARENT_RELATION_TYPES = frozenset({'parent_story', 'full_story'})
+_PARENT_RELATION_TYPES = frozenset({"parent_story", "full_story"})
 # Separate adaptations — traverse into dubious warning, not into the group
-_DUBIOUS_RELATION_TYPES = frozenset({'alternative_version', 'spin_off'})
+_DUBIOUS_RELATION_TYPES = frozenset({"alternative_version", "spin_off"})
 # Alternative/adaptation links that become AnimeSeriesRelation entries
-_ALTERNATIVE_RELATION_TYPES = frozenset({'alternative_version', 'alternative_setting', 'adaptation'})
+_ALTERNATIVE_RELATION_TYPES = frozenset(
+    {"alternative_version", "alternative_setting", "adaptation"}
+)
 
 
 @dataclass
@@ -68,7 +69,7 @@ class ProposedGroup:
     @property
     def root_title(self) -> str:
         """Return the title of the first discovered member."""
-        return self.members[0].title if self.members else 'Unknown'
+        return self.members[0].title if self.members else "Unknown"
 
 
 @dataclass
@@ -85,53 +86,65 @@ class BuildReport:
 def lazy_build_from_search_results(members: list[dict], source: str) -> Item:
     """Create or extend an AnimeSeries from a partial set of members found via search.
 
-    Members are anime dicts from MAL search results (media_id, title, image, start_date).
-    All members must be main entries connected via sequel/prequel — is_extra is False for all.
-    Does not do a full BFS; the series may be extended later by build_anime_series or Anime.save().
+    Members are anime dicts from MAL search results
+    (media_id, title, image, start_date).
+    All members must be main entries connected via sequel/prequel;
+    is_extra is False for all.
+    Does not do a full BFS; the series may be extended later by
+    build_anime_series or Anime.save().
     """
     sorted_members = sorted(
         members,
-        key=lambda m: (m.get('start_date') is None, m.get('start_date') or ''),
+        key=lambda m: (m.get("start_date") is None, m.get("start_date") or ""),
     )
-    member_ids = [str(m['media_id']) for m in sorted_members]
+    member_ids = [str(m["media_id"]) for m in sorted_members]
 
     # If any member is already linked, add newcomers to the existing series
-    existing_link = AnimeSeriesLink.objects.filter(
-        anime_item__media_id__in=member_ids,
-        anime_item__source=source,
-    ).select_related('series_item').first()
+    existing_link = (
+        AnimeSeriesLink.objects.filter(
+            anime_item__media_id__in=member_ids,
+            anime_item__source=source,
+        )
+        .select_related("series_item")
+        .first()
+    )
 
-    series_item = existing_link.series_item if existing_link else Item.objects.create(
-        media_id=str(uuid.uuid4()),
-        source=source,
-        media_type=MediaTypes.ANIME_SERIES.value,
-        title=sorted_members[0]['title'],
-        image=sorted_members[0]['image'],
+    series_item = (
+        existing_link.series_item
+        if existing_link
+        else Item.objects.create(
+            media_id=str(uuid.uuid4()),
+            source=source,
+            media_type=MediaTypes.ANIME_SERIES.value,
+            title=sorted_members[0]["title"],
+            image=sorted_members[0]["image"],
+        )
     )
 
     existing_count = AnimeSeriesLink.objects.filter(series_item=series_item).count()
     for order, member in enumerate(sorted_members, start=existing_count + 1):
         anime_item, _ = Item.objects.get_or_create(
-            media_id=str(member['media_id']),
+            media_id=str(member["media_id"]),
             media_type=MediaTypes.ANIME.value,
             source=source,
-            defaults={'title': member['title'], 'image': member['image']},
+            defaults={"title": member["title"], "image": member["image"]},
         )
         AnimeSeriesLink.objects.get_or_create(
             series_item=series_item,
             anime_item=anime_item,
             defaults={
-                'is_extra': False,
-                'order': order,
-                'total_episodes': member.get('total_episodes'),
+                "is_extra": False,
+                "order": order,
+                "total_episodes": member.get("total_episodes"),
             },
         )
 
     return series_item
 
 
-def build_anime_series(
+def build_anime_series(  # noqa: C901
     users=None,
+    *,
     dry_run: bool = True,
 ) -> BuildReport:
     """Build AnimeSeries groupings for all tracked anime.
@@ -166,7 +179,9 @@ def build_anime_series(
             continue
 
         members, warnings, errors = _discover_group(
-            item.media_id, item.source, global_visited,
+            item.media_id,
+            item.source,
+            global_visited,
         )
         report.errors.extend(errors)
 
@@ -178,11 +193,11 @@ def build_anime_series(
             members=[
                 GroupMember(
                     mid,
-                    info['title'],
-                    info['image'],
-                    info.get('is_extra', False),
-                    info.get('start_date'),
-                    info.get('total_episodes'),
+                    info["title"],
+                    info["image"],
+                    info.get("is_extra", False),
+                    info.get("start_date"),
+                    info.get("total_episodes"),
                 )
                 for mid, info in members.items()
             ],
@@ -195,8 +210,10 @@ def build_anime_series(
                 series_item = _apply_group(group, item.source, users)
                 created_series.append(series_item)
             except Exception:
-                logger.exception('Failed to apply group for %s', group.root_title)
-                report.errors.append(f'DB error applying group for {group.root_title!r}')
+                logger.exception("Failed to apply group for %s", group.root_title)
+                report.errors.append(
+                    f"DB error applying group for {group.root_title!r}"
+                )
 
     # Step 4: build AnimeSeriesRelation for all newly created series
     if not dry_run:
@@ -205,13 +222,14 @@ def build_anime_series(
                 build_related_for_series(series_item, series_item.source)
             except Exception:
                 logger.exception(
-                    'Failed to build related series for %s', series_item.title,
+                    "Failed to build related series for %s",
+                    series_item.title,
                 )
 
     return report
 
 
-def _discover_group(
+def _discover_group(  # noqa: C901
     start_media_id: str,
     source: str,
     global_visited: set[str],
@@ -245,25 +263,25 @@ def _discover_group(
                 source,
             )
         except Exception as exc:  # noqa: BLE001
-            errors.append(f'API error for id={current_id}: {exc}')
+            errors.append(f"API error for id={current_id}: {exc}")
             continue
 
         members[current_id] = {
-            'title': metadata.get('title', f'Unknown ({current_id})'),
-            'image': metadata.get('image', ''),
-            'is_extra': current_is_extra,
-            'start_date': metadata.get('details', {}).get('start_date'),
-            'total_episodes': metadata.get('max_progress'),
+            "title": metadata.get("title", f"Unknown ({current_id})"),
+            "image": metadata.get("image", ""),
+            "is_extra": current_is_extra,
+            "start_date": metadata.get("details", {}).get("start_date"),
+            "total_episodes": metadata.get("max_progress"),
         }
 
-        for related in metadata.get('related', {}).get('related_anime', []):
-            rel_id = str(related['media_id'])
-            rel_type = related.get('relation_type', '')
+        for related in metadata.get("related", {}).get("related_anime", []):
+            rel_id = str(related["media_id"])
+            rel_type = related.get("relation_type", "")
 
             if rel_type in _DUBIOUS_RELATION_TYPES:
                 warnings.append(
-                    f'{related["title"]!r} via {rel_type!r} — '
-                    'may be a separate adaptation, verify manually',
+                    f"{related['title']!r} via {rel_type!r} — "
+                    "may be a separate adaptation, verify manually",
                 )
                 continue
 
@@ -282,7 +300,7 @@ def _discover_group(
             elif rel_type in _PARENT_RELATION_TYPES:
                 # parent_story/full_story: current node is an OVA/extra,
                 # destination is the main series entry
-                members.setdefault(current_id, {})['is_extra'] = True
+                members.setdefault(current_id, {})["is_extra"] = True
                 if rel_id not in local_visited and rel_id not in global_visited:
                     local_visited.add(rel_id)
                     queue.append((rel_id, False))
@@ -293,7 +311,7 @@ def _discover_group(
 
 def _sort_key(m: GroupMember) -> tuple:
     """Sort key: main entries first, then extras; chronological within each group."""
-    return (m.is_extra, m.start_date is None, m.start_date or '')
+    return (m.is_extra, m.start_date is None, m.start_date or "")
 
 
 @transaction.atomic
@@ -308,7 +326,9 @@ def _apply_group(
     ordered_members = sorted(group.members, key=_sort_key)
 
     # Use the earliest main entry as the series title/image.
-    first_main = next((m for m in ordered_members if not m.is_extra), ordered_members[0])
+    first_main = next(
+        (m for m in ordered_members if not m.is_extra), ordered_members[0]
+    )
 
     series_item = Item.objects.create(
         media_id=str(uuid.uuid4()),
@@ -326,15 +346,15 @@ def _apply_group(
             media_id=member.media_id,
             media_type=MediaTypes.ANIME.value,
             source=source,
-            defaults={'title': member.title, 'image': member.image},
+            defaults={"title": member.title, "image": member.image},
         )
         AnimeSeriesLink.objects.get_or_create(
             series_item=series_item,
             anime_item=anime_item,
             defaults={
-                'is_extra': member.is_extra,
-                'order': order,
-                'total_episodes': member.total_episodes,
+                "is_extra": member.is_extra,
+                "order": order,
+                "total_episodes": member.total_episodes,
             },
         )
 
@@ -344,7 +364,7 @@ def _apply_group(
         item__media_type=MediaTypes.ANIME.value,
         item__source=source,
         related_series__isnull=True,
-    ).select_related('user', 'item')
+    ).select_related("user", "item")
     if target_users is not None:
         tracked_qs = tracked_qs.filter(user__in=target_users)
 
@@ -357,14 +377,14 @@ def _apply_group(
             series, _ = AnimeSeries.objects.get_or_create(
                 user=user,
                 item=series_item,
-                defaults={'status': anime.status},
+                defaults={"status": anime.status},
             )
             user_series[user] = series
         anime.related_series = user_series[user]
         to_update.append(anime)
 
     if to_update:
-        Anime.objects.bulk_update(to_update, ['related_series'])
+        Anime.objects.bulk_update(to_update, ["related_series"])
 
     return series_item
 
@@ -384,23 +404,27 @@ def build_related_for_series(series_item: Item, source: str) -> None:
         return
 
     member_ids = list(
-        AnimeSeriesLink.objects.filter(series_item=series_item)
-        .values_list('anime_item__media_id', flat=True)
+        AnimeSeriesLink.objects.filter(series_item=series_item).values_list(
+            "anime_item__media_id", flat=True
+        )
     )
-    member_id_set = set(str(m) for m in member_ids)
+    member_id_set = {str(m) for m in member_ids}
 
     # Collect alternative/adaptation seeds from member anime
     seeds: dict[str, str] = {}  # related_mal_id → relation_type
     for mal_id in member_ids:
         try:
             meta = providers.services.get_media_metadata(
-                MediaTypes.ANIME.value, str(mal_id), source,
+                MediaTypes.ANIME.value,
+                str(mal_id),
+                source,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - best effort, skip unreachable members
+            logger.debug("Could not fetch metadata for anime %s", mal_id)
             continue
-        for rel in meta.get('related', {}).get('related_anime', []):
-            rel_type = rel.get('relation_type', '')
-            rel_id = str(rel.get('media_id', ''))
+        for rel in meta.get("related", {}).get("related_anime", []):
+            rel_type = rel.get("relation_type", "")
+            rel_id = str(rel.get("media_id", ""))
             if rel_type in _ALTERNATIVE_RELATION_TYPES and rel_id not in member_id_set:
                 seeds.setdefault(rel_id, rel_type)
 
@@ -411,12 +435,12 @@ def build_related_for_series(series_item: Item, source: str) -> None:
         AnimeSeriesRelation.objects.get_or_create(
             from_series=series_item,
             to_series=related_series_item,
-            defaults={'relation_type': rel_type},
+            defaults={"relation_type": rel_type},
         )
         AnimeSeriesRelation.objects.get_or_create(
             from_series=related_series_item,
             to_series=series_item,
-            defaults={'relation_type': rel_type},
+            defaults={"relation_type": rel_type},
         )
 
 
@@ -431,7 +455,7 @@ def _find_or_build_series_for_anime(mal_id: str, source: str) -> Item | None:
             anime_item__media_id=mal_id,
             anime_item__source=source,
         )
-        .select_related('series_item')
+        .select_related("series_item")
         .first()
     )
     if existing:
@@ -445,11 +469,11 @@ def _find_or_build_series_for_anime(mal_id: str, source: str) -> Item | None:
         members=[
             GroupMember(
                 mid,
-                info['title'],
-                info['image'],
-                info.get('is_extra', False),
-                info.get('start_date'),
-                info.get('total_episodes'),
+                info["title"],
+                info["image"],
+                info.get("is_extra", False),
+                info.get("start_date"),
+                info.get("total_episodes"),
             )
             for mid, info in members.items()
         ],
@@ -457,7 +481,7 @@ def _find_or_build_series_for_anime(mal_id: str, source: str) -> Item | None:
     try:
         _apply_group(group, source, target_users=None)
     except Exception:
-        logger.exception('Failed to build related series for anime %s', mal_id)
+        logger.exception("Failed to build related series for anime %s", mal_id)
         return None
 
     link = (
@@ -465,7 +489,7 @@ def _find_or_build_series_for_anime(mal_id: str, source: str) -> Item | None:
             anime_item__media_id=mal_id,
             anime_item__source=source,
         )
-        .select_related('series_item')
+        .select_related("series_item")
         .first()
     )
     return link.series_item if link else None
@@ -481,7 +505,7 @@ def _track_next_season_if_completed(series: AnimeSeries) -> None:
         AnimeSeriesLink.objects.filter(
             series_item=series.item,
             is_extra=False,
-        ).order_by('order')
+        ).order_by("order")
     )
     if not links:
         return
@@ -491,7 +515,7 @@ def _track_next_season_if_completed(series: AnimeSeries) -> None:
         Anime.objects.filter(
             user=series.user,
             item_id__in=item_ids,
-        ).values_list('item_id', 'status')
+        ).values_list("item_id", "status")
     )
     last_tracked_index = None
     for index, item_id in enumerate(item_ids):
@@ -504,7 +528,10 @@ def _track_next_season_if_completed(series: AnimeSeries) -> None:
         return
 
     Anime._track_season_after(
-        series, series.user, links, last_tracked_index,
+        series,
+        series.user,
+        links,
+        last_tracked_index,
     )
 
 
@@ -524,13 +551,14 @@ def recompute_series_statuses() -> tuple[int, int]:
 
         try:
             _track_next_season_if_completed(series)
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.warning(
-                'Could not auto-track next season for series %s', series.pk,
+                "Could not auto-track next season for series %s",
+                series.pk,
             )
         series.refresh_from_db()
 
-        statuses = set(series.anime_seasons.values_list('status', flat=True))
+        statuses = set(series.anime_seasons.values_list("status", flat=True))
         new_status = AnimeSeries.status_for(statuses)
         if new_status and new_status != series.status:
             AnimeSeries.objects.filter(pk=series.pk).update(status=new_status)

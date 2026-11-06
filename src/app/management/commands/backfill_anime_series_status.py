@@ -1,4 +1,5 @@
 """Recompute AnimeSeries.status from its seasons' current statuses."""
+
 from django.core.management.base import BaseCommand
 
 from app.anime_series_builder import recompute_series_statuses
@@ -15,7 +16,7 @@ class Command(BaseCommand):
 
     help = "Recompute AnimeSeries.status from its seasons current statuses"
 
-    def handle(self, *args, **options):
+    def handle(self, *_args, **_options):
         """Run the recompute."""
         updated, total = recompute_series_statuses()
         self.stdout.write(self.style.SUCCESS(f"Updated {updated}/{total} series"))
