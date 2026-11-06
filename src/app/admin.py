@@ -7,7 +7,11 @@ from django.contrib.auth import get_user_model
 from django.shortcuts import render
 from django.urls import path
 
-from app.anime_series_builder import build_anime_series, recompute_series_statuses
+from app.anime_series_builder import (
+    _find_or_build_series_for_anime,
+    build_anime_series,
+    recompute_series_statuses,
+)
 from app.models import (
     Anime,
     AnimeEpisode,
@@ -52,7 +56,7 @@ class ItemAdmin(admin.ModelAdmin):
     list_filter = ["media_type", "source"]
     inlines_map = {"animeseries": [AnimeSeriesLinkInline]}
 
-    def get_inlines(self, request, obj=None):
+    def get_inlines(self, request, obj=None):  # noqa: ARG002
         """Show AnimeSeriesLink inline only for animeseries-type Items."""
         if obj and obj.media_type == "animeseries":
             return [AnimeSeriesLinkInline]
@@ -86,13 +90,18 @@ class MediaAdmin(admin.ModelAdmin):
 
 @admin.register(AnimeSeriesLink)
 class AnimeSeriesLinkAdmin(admin.ModelAdmin):
-    """Admin for global anime–series mappings."""
+    """Admin for global anime-series mappings."""
 
     search_fields = ["anime_item__title", "series_item__title"]
     list_display = ["anime_item", "series_item", "order", "is_extra"]
     list_filter = ["is_extra"]
     autocomplete_fields = ["anime_item", "series_item"]
-    actions = ["move_to_extras", "move_to_seasons", "remove_from_series", "move_to_related"]
+    actions = [
+        "move_to_extras",
+        "move_to_seasons",
+        "remove_from_series",
+        "move_to_related",
+    ]
 
     @admin.action(description="Mark selected as Extras")
     def move_to_extras(self, request, queryset):
@@ -115,26 +124,25 @@ class AnimeSeriesLinkAdmin(admin.ModelAdmin):
 
     @admin.action(description="Move selected to a new Related series")
     def move_to_related(self, request, queryset):
-        """Detach selected anime from their series and link as an alternative/adaptation.
+        """Detach selected anime from their series and link as an alternative.
 
         For each selected link: removes the anime from the current series, builds a
         new AnimeSeries for it (depth-1 BFS), and creates a bidirectional
         AnimeSeriesRelation with relation_type='alternative_version'.
         Edit the relation_type in AnimeSeriesRelation admin afterwards if needed.
         """
-        from app.anime_series_builder import _find_or_build_series_for_anime  # noqa: PLC0415
-
         created, skipped = 0, 0
         for link in queryset.select_related("series_item", "anime_item"):
             original_series_item = link.series_item
             anime_item = link.anime_item
             source = anime_item.source
 
-            # Remove link first so _find_or_build_series_for_anime creates a fresh series
+            # Remove link first so _find_or_build_series_for_anime builds a fresh series
             link.delete()
 
             new_series_item = _find_or_build_series_for_anime(
-                str(anime_item.media_id), source,
+                str(anime_item.media_id),
+                source,
             )
             if new_series_item and new_series_item.pk != original_series_item.pk:
                 AnimeSeriesRelation.objects.get_or_create(
@@ -154,7 +162,8 @@ class AnimeSeriesLinkAdmin(admin.ModelAdmin):
         if created:
             self.message_user(
                 request,
-                f"Moved {created} anime to Related series (relation_type=alternative_version). "
+                f"Moved {created} anime to Related series "
+                "(relation_type=alternative_version). "
                 "Edit AnimeSeriesRelation if a different type is needed.",
             )
         if skipped:
@@ -186,9 +195,9 @@ class AnimeAdmin(MediaAdmin):
         urls = super().get_urls()
         extra = [
             path(
-                'build-series/',
+                "build-series/",
                 self.admin_site.admin_view(self.build_series_view),
-                name='app_anime_build_series',
+                name="app_anime_build_series",
             ),
         ]
         return extra + urls
@@ -197,11 +206,11 @@ class AnimeAdmin(MediaAdmin):
         """Render the anime series builder tool page."""
         report = None
         dry_run = True
-        selected_user_id = request.POST.get('user_id', '')
+        selected_user_id = request.POST.get("user_id", "")
 
-        if request.method == 'POST':
-            action = request.POST.get('action', 'dry_run')
-            dry_run = action == 'dry_run'
+        if request.method == "POST":
+            action = request.POST.get("action", "dry_run")
+            dry_run = action == "dry_run"
 
             users = None
             if selected_user_id:
@@ -214,13 +223,13 @@ class AnimeAdmin(MediaAdmin):
 
         context = {
             **self.admin_site.each_context(request),
-            'report': report,
-            'dry_run': dry_run,
-            'all_users': User.objects.order_by('username'),
-            'selected_user_id': selected_user_id,
-            'title': 'Build Anime Series',
+            "report": report,
+            "dry_run": dry_run,
+            "all_users": User.objects.order_by("username"),
+            "selected_user_id": selected_user_id,
+            "title": "Build Anime Series",
         }
-        return render(request, 'admin/app/anime/build_series.html', context)
+        return render(request, "admin/app/anime/build_series.html", context)
 
 
 @admin.register(AnimeSeries)
@@ -234,9 +243,9 @@ class AnimeSeriesAdmin(MediaAdmin):
         urls = super().get_urls()
         extra = [
             path(
-                'recompute-status/',
+                "recompute-status/",
                 self.admin_site.admin_view(self.recompute_status_view),
-                name='app_animeseries_recompute_status',
+                name="app_animeseries_recompute_status",
             ),
         ]
         return extra + urls
@@ -244,52 +253,59 @@ class AnimeSeriesAdmin(MediaAdmin):
     def recompute_status_view(self, request):
         """Render the AnimeSeries status recompute tool page."""
         result = None
-        if request.method == 'POST':
+        if request.method == "POST":
             updated, total = recompute_series_statuses()
-            result = {'updated': updated, 'total': total}
+            result = {"updated": updated, "total": total}
 
         context = {
             **self.admin_site.each_context(request),
-            'result': result,
-            'title': 'Recompute Anime Series Status',
+            "result": result,
+            "title": "Recompute Anime Series Status",
         }
-        return render(request, 'admin/app/animeseries/recompute_status.html', context)
+        return render(request, "admin/app/animeseries/recompute_status.html", context)
 
 
 @admin.register(SimklMapping)
 class SimklMappingAdmin(admin.ModelAdmin):
     """Admin for MAL → Simkl ID mappings."""
 
-    search_fields = ['item__title', 'simkl_id']
-    list_display = ['item', 'simkl_id', 'cached_at']
-    autocomplete_fields = ['item']
+    search_fields = ["item__title", "simkl_id"]
+    list_display = ["item", "simkl_id", "cached_at"]
+    autocomplete_fields = ["item"]
 
 
 @admin.register(AnimeEpisode)
 class AnimeEpisodeAdmin(admin.ModelAdmin):
     """Admin for global anime episode metadata."""
 
-    search_fields = ['anime_item__title', 'title']
-    list_display = ['anime_item', 'episode_number', 'title', 'aired', 'is_special']
-    list_filter = ['is_special']
-    autocomplete_fields = ['anime_item']
+    search_fields = ["anime_item__title", "title"]
+    list_display = ["anime_item", "episode_number", "title", "aired", "is_special"]
+    list_filter = ["is_special"]
+    autocomplete_fields = ["anime_item"]
 
 
 @admin.register(WatchedAnimeEpisode)
 class WatchedAnimeEpisodeAdmin(admin.ModelAdmin):
     """Admin for per-user watched episode records."""
 
-    search_fields = ['user__username', 'episode__title', 'anime__item__title']
-    list_display = ['user', 'anime', 'episode', 'watched_at']
-    list_filter = ['watched_at']
+    search_fields = ["user__username", "episode__title", "anime__item__title"]
+    list_display = ["user", "anime", "episode", "watched_at"]
+    list_filter = ["watched_at"]
 
 
 # Auto-register remaining models
 app_models = apps.get_app_config("app").get_models()
 SpecialModels = [
-    "Item", "Episode", "BasicMedia", "UserMessage",
-    "AnimeSeriesLink", "AnimeSeriesRelation", "Anime",
-    "SimklMapping", "AnimeEpisode", "WatchedAnimeEpisode",
+    "Item",
+    "Episode",
+    "BasicMedia",
+    "UserMessage",
+    "AnimeSeriesLink",
+    "AnimeSeriesRelation",
+    "Anime",
+    "SimklMapping",
+    "AnimeEpisode",
+    "WatchedAnimeEpisode",
 ]
 for model in app_models:
     if (

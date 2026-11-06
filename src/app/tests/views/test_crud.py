@@ -58,7 +58,7 @@ class CreateMedia(TestCase):
 
     @override_settings(MEDIA_ROOT=("create_media"))
     def test_media_save_anime_no_duplicate_on_repeated_post(self):
-        """Posting media_save twice for the same anime must not create a duplicate row."""
+        """Posting media_save twice for one anime must not duplicate the row."""
         Item.objects.create(
             media_id="9999",
             source=Sources.MAL.value,
