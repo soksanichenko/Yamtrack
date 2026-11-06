@@ -554,7 +554,7 @@ class MediaManager(models.Manager):
             ),
         )
 
-    def annotate_max_progress(self, media_list, media_type):
+    def annotate_max_progress(self, media_list, media_type):  # noqa: C901
         """Annotate max_progress for all media items."""
         current_datetime = timezone.now()
 
@@ -603,9 +603,9 @@ class MediaManager(models.Manager):
                         anime_item_id__in=[m.item.id for m in missing],
                         is_special=False,
                     )
-                    .values('anime_item_id')
-                    .annotate(n=Count('id'))
-                    .values_list('anime_item_id', 'n')
+                    .values("anime_item_id")
+                    .annotate(n=Count("id"))
+                    .values_list("anime_item_id", "n")
                 )
                 for media in missing:
                     count = episode_counts.get(media.item.id)
@@ -650,7 +650,8 @@ class MediaManager(models.Manager):
         """Annotate AnimeSeries with max_progress and _main_anime_ids.
 
         max_progress = total released episodes across all non-extra member anime
-        (sum of max event content_number per anime item, same logic as individual Anime).
+        (sum of max event content_number per anime item, same logic as individual
+        Anime).
         _main_anime_ids is used by AnimeSeries.progress to filter non-extra seasons.
         """
         series_item_ids = [s.item_id for s in series_list]
@@ -658,16 +659,16 @@ class MediaManager(models.Manager):
         links = AnimeSeriesLink.objects.filter(
             series_item_id__in=series_item_ids,
             is_extra=False,
-        ).values('series_item_id', 'anime_item_id', 'total_episodes')
+        ).values("series_item_id", "anime_item_id", "total_episodes")
 
         series_to_main_ids: dict = {}
         # total_episodes stored in the link (from MAL metadata at build time)
         link_episode_totals: dict[int, int] = {}
         for link in links:
-            aid = link['anime_item_id']
-            series_to_main_ids.setdefault(link['series_item_id'], set()).add(aid)
-            if link['total_episodes']:
-                link_episode_totals[aid] = link['total_episodes']
+            aid = link["anime_item_id"]
+            series_to_main_ids.setdefault(link["series_item_id"], set()).add(aid)
+            if link["total_episodes"]:
+                link_episode_totals[aid] = link["total_episodes"]
 
         all_member_ids = {aid for ids in series_to_main_ids.values() for aid in ids}
 
@@ -680,9 +681,9 @@ class MediaManager(models.Manager):
                 item_id__in=no_link_total,
                 datetime__lte=current_datetime,
                 content_number__isnull=False,
-            ).values('item_id', 'content_number'):
-                item_id = event['item_id']
-                n = event['content_number']
+            ).values("item_id", "content_number"):
+                item_id = event["item_id"]
+                n = event["content_number"]
                 if n > event_totals.get(item_id, 0):
                     event_totals[item_id] = n
 
@@ -695,9 +696,9 @@ class MediaManager(models.Manager):
                     anime_item_id__in=no_events,
                     is_special=False,
                 )
-                .values('anime_item_id')
-                .annotate(n=Count('id'))
-                .values_list('anime_item_id', 'n')
+                .values("anime_item_id")
+                .annotate(n=Count("id"))
+                .values_list("anime_item_id", "n")
             )
 
         for series in series_list:
@@ -2001,14 +2002,14 @@ class AnimeSeriesLink(models.Model):
     series_item = models.ForeignKey(
         Item,
         on_delete=models.CASCADE,
-        related_name='series_anime',
-        limit_choices_to={'media_type': MediaTypes.ANIME_SERIES.value},
+        related_name="series_anime",
+        limit_choices_to={"media_type": MediaTypes.ANIME_SERIES.value},
     )
     anime_item = models.ForeignKey(
         Item,
         on_delete=models.CASCADE,
-        related_name='series_memberships',
-        limit_choices_to={'media_type': MediaTypes.ANIME.value},
+        related_name="series_memberships",
+        limit_choices_to={"media_type": MediaTypes.ANIME.value},
     )
     order = models.PositiveIntegerField(null=True, blank=True)
     is_extra = models.BooleanField(default=False)
@@ -2019,14 +2020,14 @@ class AnimeSeriesLink(models.Model):
 
         constraints = [
             models.UniqueConstraint(
-                fields=['series_item', 'anime_item'],
-                name='app_animeserieslink_unique_series_anime',
+                fields=["series_item", "anime_item"],
+                name="app_animeserieslink_unique_series_anime",
             ),
         ]
 
     def __str__(self):
         """Return a human-readable link description."""
-        return f'{self.anime_item} → {self.series_item}'
+        return f"{self.anime_item} → {self.series_item}"
 
 
 class AnimeSeriesRelation(models.Model):
@@ -2037,22 +2038,22 @@ class AnimeSeriesRelation(models.Model):
     """
 
     RELATION_CHOICES = [
-        ('alternative_version', 'Alternative Version'),
-        ('alternative_setting', 'Alternative Setting'),
-        ('adaptation', 'Adaptation'),
+        ("alternative_version", "Alternative Version"),
+        ("alternative_setting", "Alternative Setting"),
+        ("adaptation", "Adaptation"),
     ]
 
     from_series = models.ForeignKey(
         Item,
         on_delete=models.CASCADE,
-        related_name='relations_from',
-        limit_choices_to={'media_type': MediaTypes.ANIME_SERIES.value},
+        related_name="relations_from",
+        limit_choices_to={"media_type": MediaTypes.ANIME_SERIES.value},
     )
     to_series = models.ForeignKey(
         Item,
         on_delete=models.CASCADE,
-        related_name='relations_to',
-        limit_choices_to={'media_type': MediaTypes.ANIME_SERIES.value},
+        related_name="relations_to",
+        limit_choices_to={"media_type": MediaTypes.ANIME_SERIES.value},
     )
     relation_type = models.CharField(max_length=30, choices=RELATION_CHOICES)
 
@@ -2061,14 +2062,16 @@ class AnimeSeriesRelation(models.Model):
 
         constraints = [
             models.UniqueConstraint(
-                fields=['from_series', 'to_series'],
-                name='app_animeseriesrelation_unique',
+                fields=["from_series", "to_series"],
+                name="app_animeseriesrelation_unique",
             ),
         ]
 
     def __str__(self):
         """Return a human-readable relation description."""
-        return f'{self.from_series.title} → {self.to_series.title} ({self.relation_type})'
+        return (
+            f"{self.from_series.title} → {self.to_series.title} ({self.relation_type})"
+        )
 
 
 class SimklMapping(models.Model):
@@ -2077,15 +2080,15 @@ class SimklMapping(models.Model):
     item = models.OneToOneField(
         Item,
         on_delete=models.CASCADE,
-        related_name='simkl_mapping',
-        limit_choices_to={'media_type': MediaTypes.ANIME.value},
+        related_name="simkl_mapping",
+        limit_choices_to={"media_type": MediaTypes.ANIME.value},
     )
     simkl_id = models.IntegerField()
     cached_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         """Return human-readable mapping description."""
-        return f'{self.item.title} → Simkl:{self.simkl_id}'
+        return f"{self.item.title} → Simkl:{self.simkl_id}"
 
 
 class AnimeEpisode(models.Model):
@@ -2094,25 +2097,25 @@ class AnimeEpisode(models.Model):
     anime_item = models.ForeignKey(
         Item,
         on_delete=models.CASCADE,
-        related_name='anime_episodes',
-        limit_choices_to={'media_type': MediaTypes.ANIME.value},
+        related_name="anime_episodes",
+        limit_choices_to={"media_type": MediaTypes.ANIME.value},
     )
     episode_number = models.PositiveSmallIntegerField()
-    title = models.CharField(max_length=500, blank=True, default='')
-    description = models.TextField(blank=True, default='')
+    title = models.CharField(max_length=500, blank=True, default="")
+    description = models.TextField(blank=True, default="")
     aired = models.DateTimeField(null=True, blank=True)
-    img = models.URLField(max_length=500, null=True, blank=True)
+    img = models.URLField(max_length=500, null=True, blank=True)  # noqa: DJ001
     is_special = models.BooleanField(default=False)
 
     class Meta:
         """Meta options for the model."""
 
-        unique_together = [['anime_item', 'episode_number']]
-        ordering = ['episode_number']
+        unique_together = [["anime_item", "episode_number"]]
+        ordering = ["episode_number"]
 
     def __str__(self):
         """Return episode identifier."""
-        return f'{self.anime_item.title} E{self.episode_number}'
+        return f"{self.anime_item.title} E{self.episode_number}"
 
 
 class AnimeSeries(Media):
@@ -2125,8 +2128,8 @@ class AnimeSeries(Media):
 
         constraints = [
             models.UniqueConstraint(
-                fields=['user', 'item'],
-                name='%(app_label)s_%(class)s_unique_item_user',
+                fields=["user", "item"],
+                name="%(app_label)s_%(class)s_unique_item_user",
             ),
         ]
 
@@ -2155,21 +2158,20 @@ class AnimeSeries(Media):
     @property
     def progress(self):
         """Return total episodes watched across all non-extra anime seasons."""
-        if hasattr(self, '_main_anime_ids'):
+        if hasattr(self, "_main_anime_ids"):
             main_ids = self._main_anime_ids
         else:
             main_ids = frozenset(
                 AnimeSeriesLink.objects.filter(
                     series_item=self.item,
                     is_extra=False,
-                ).values_list('anime_item_id', flat=True)
+                ).values_list("anime_item_id", flat=True)
             )
-        # Deduplicate by item_id — take highest progress per item to handle legacy duplicates.
+        # Deduplicate by item_id: keep the highest progress (legacy duplicates).
         best: dict[int, int] = {}
         for a in self.anime_seasons.all():
-            if a.item_id in main_ids:
-                if a.progress > best.get(a.item_id, -1):
-                    best[a.item_id] = a.progress
+            if a.item_id in main_ids and a.progress > best.get(a.item_id, -1):
+                best[a.item_id] = a.progress
         return sum(best.values())
 
     @property
@@ -2179,7 +2181,7 @@ class AnimeSeries(Media):
             a for a in self.anime_seasons.all() if a.progressed_at is not None
         ]
         if not seasons_with_progress:
-            return ''
+            return ""
         latest = max(seasons_with_progress, key=lambda a: a.progressed_at)
         return latest.item.title
 
@@ -2198,11 +2200,13 @@ class AnimeSeries(Media):
         return max(dates) if dates else None
 
 
-_ANIME_MAIN_RELATION_TYPES = frozenset({'sequel', 'prequel'})
-_ANIME_EXTRA_RELATION_TYPES = frozenset({'side_story', 'summary'})
-_ANIME_PARENT_RELATION_TYPES = frozenset({'parent_story', 'full_story'})
+_ANIME_MAIN_RELATION_TYPES = frozenset({"sequel", "prequel"})
+_ANIME_EXTRA_RELATION_TYPES = frozenset({"side_story", "summary"})
+_ANIME_PARENT_RELATION_TYPES = frozenset({"parent_story", "full_story"})
 _ANIME_ALL_SERIES_RELATION_TYPES = (
-    _ANIME_MAIN_RELATION_TYPES | _ANIME_EXTRA_RELATION_TYPES | _ANIME_PARENT_RELATION_TYPES
+    _ANIME_MAIN_RELATION_TYPES
+    | _ANIME_EXTRA_RELATION_TYPES
+    | _ANIME_PARENT_RELATION_TYPES
 )
 
 
@@ -2215,7 +2219,7 @@ class Anime(Media):
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
-        related_name='anime_seasons',
+        related_name="anime_seasons",
     )
 
     @tracker
@@ -2224,13 +2228,13 @@ class Anime(Media):
         if self.related_series_id is None:
             self.related_series = self._get_or_create_series()
         super().save(*args, **kwargs)
-        if self.tracker.has_changed('status') and self.related_series_id:
+        if self.tracker.has_changed("status") and self.related_series_id:
             self._sync_series_status()
 
     def _sync_series_status(self):
         """Propagate anime status changes to the parent AnimeSeries."""
         statuses = set(
-            self.related_series.anime_seasons.values_list('status', flat=True)
+            self.related_series.anime_seasons.values_list("status", flat=True)
         )
         new_status = AnimeSeries.status_for(statuses)
         if new_status is None:
@@ -2249,7 +2253,7 @@ class Anime(Media):
                 # A provider hiccup while auto-tracking the next season
                 # shouldn't fail the save of the season the user just completed.
                 logger.exception(
-                    'Could not auto-track next season after completing %s',
+                    "Could not auto-track next season after completing %s",
                     self.pk,
                 )
 
@@ -2259,7 +2263,7 @@ class Anime(Media):
             AnimeSeriesLink.objects.filter(
                 series_item=self.related_series.item,
                 is_extra=False,
-            ).order_by('order')
+            ).order_by("order")
         )
         item_ids = [lnk.anime_item_id for lnk in links]
         if self.item_id not in item_ids:
@@ -2305,7 +2309,7 @@ class Anime(Media):
             series, _ = AnimeSeries.objects.get_or_create(
                 user=self.user,
                 item=existing_link.series_item,
-                defaults={'status': self.status},
+                defaults={"status": self.status},
             )
             return series
 
@@ -2316,18 +2320,18 @@ class Anime(Media):
             self.item.media_id,
             self.item.source,
         )
-        all_related = metadata.get('related', {}).get('related_anime', [])
+        all_related = metadata.get("related", {}).get("related_anime", [])
 
         # If every series-related entry points back to a parent, this anime is extra
         # (an OVA, special, or compilation that knows its own parent series).
         is_self_extra = any(
-            r.get('relation_type') in _ANIME_PARENT_RELATION_TYPES
-            for r in all_related
+            r.get("relation_type") in _ANIME_PARENT_RELATION_TYPES for r in all_related
         )
 
         series_related = [
-            r for r in all_related
-            if r.get('relation_type') in _ANIME_ALL_SERIES_RELATION_TYPES
+            r
+            for r in all_related
+            if r.get("relation_type") in _ANIME_ALL_SERIES_RELATION_TYPES
         ]
 
         if not series_related:
@@ -2336,7 +2340,7 @@ class Anime(Media):
         # Step 3: check if any neighbour is already linked to a series
         for related in series_related:
             related_item = Item.objects.filter(
-                media_id=related['media_id'],
+                media_id=related["media_id"],
                 media_type=MediaTypes.ANIME.value,
                 source=self.item.source,
             ).first()
@@ -2348,12 +2352,12 @@ class Anime(Media):
                     AnimeSeriesLink.objects.get_or_create(
                         series_item=neighbour_link.series_item,
                         anime_item=self.item,
-                        defaults={'is_extra': is_self_extra},
+                        defaults={"is_extra": is_self_extra},
                     )
                     series, _ = AnimeSeries.objects.get_or_create(
                         user=self.user,
                         item=neighbour_link.series_item,
-                        defaults={'status': self.status},
+                        defaults={"status": self.status},
                     )
                     return series
 
@@ -2374,10 +2378,10 @@ class Anime(Media):
             is_extra=is_self_extra,
         )
         for related in series_related:
-            rel_type = related.get('relation_type', '')
+            rel_type = related.get("relation_type", "")
             related_is_extra = rel_type in _ANIME_EXTRA_RELATION_TYPES
             related_item = Item.objects.filter(
-                media_id=related['media_id'],
+                media_id=related["media_id"],
                 media_type=MediaTypes.ANIME.value,
                 source=self.item.source,
             ).first()
@@ -2385,12 +2389,12 @@ class Anime(Media):
                 AnimeSeriesLink.objects.get_or_create(
                     series_item=series_item,
                     anime_item=related_item,
-                    defaults={'is_extra': related_is_extra},
+                    defaults={"is_extra": related_is_extra},
                 )
         series, _ = AnimeSeries.objects.get_or_create(
             user=self.user,
             item=series_item,
-            defaults={'status': self.status},
+            defaults={"status": self.status},
         )
         return series
 
@@ -2401,10 +2405,10 @@ class Anime(Media):
         in the local DB yet (e.g. the user is tracking S2 before S1).
         """
         for related in series_related:
-            if related.get('relation_type') != 'prequel':
+            if related.get("relation_type") != "prequel":
                 continue
             prequel_item = Item.objects.filter(
-                media_id=related['media_id'],
+                media_id=related["media_id"],
                 media_type=MediaTypes.ANIME.value,
                 source=self.item.source,
             ).first()
@@ -2413,14 +2417,15 @@ class Anime(Media):
         return self.item.title, self.item.image
 
     def _sync_progress(self):
-        """Sync progress field from WatchedAnimeEpisode count and handle auto-completion."""
+        """Sync progress from WatchedAnimeEpisode count and handle auto-completion."""
         count = WatchedAnimeEpisode.objects.filter(anime=self).count()
         Anime.objects.filter(pk=self.pk).update(
             progress=count,
             progressed_at=timezone.now(),
         )
         total = AnimeEpisode.objects.filter(
-            anime_item=self.item, is_special=False,
+            anime_item=self.item,
+            is_special=False,
         ).count()
         if total and count >= total and self.status != Status.COMPLETED.value:
             now = timezone.now().replace(second=0, microsecond=0)
@@ -2433,7 +2438,7 @@ class Anime(Media):
                 self._sync_series_status()
 
     def _migrate_legacy_progress(self):
-        """Create WatchedAnimeEpisode for episodes 1..progress on first episode page open."""
+        """Create WatchedAnimeEpisode for episodes 1..progress on first page open."""
         if not self.progress:
             return
         if WatchedAnimeEpisode.objects.filter(anime=self).exists():
@@ -2443,11 +2448,14 @@ class Anime(Media):
                 anime_item=self.item,
                 is_special=False,
                 episode_number__lte=self.progress,
-            ).order_by('episode_number')
+            ).order_by("episode_number")
         )
         if episodes:
             WatchedAnimeEpisode.objects.bulk_create(
-                [WatchedAnimeEpisode(user=self.user, anime=self, episode=ep) for ep in episodes],
+                [
+                    WatchedAnimeEpisode(user=self.user, anime=self, episode=ep)
+                    for ep in episodes
+                ],
                 ignore_conflicts=True,
             )
 
@@ -2456,20 +2464,24 @@ class WatchedAnimeEpisode(models.Model):
     """Per-user watch record for a single anime episode."""
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    anime = models.ForeignKey(Anime, on_delete=models.CASCADE, related_name='watched_episodes')
+    anime = models.ForeignKey(
+        Anime, on_delete=models.CASCADE, related_name="watched_episodes"
+    )
     episode = models.ForeignKey(
-        AnimeEpisode, on_delete=models.CASCADE, related_name='watches',
+        AnimeEpisode,
+        on_delete=models.CASCADE,
+        related_name="watches",
     )
     watched_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         """Meta options for the model."""
 
-        unique_together = [['anime', 'episode']]
+        unique_together = [["anime", "episode"]]
 
     def __str__(self):
         """Return human-readable watch record."""
-        return f'{self.user} watched {self.episode}'
+        return f"{self.user} watched {self.episode}"
 
 
 class Movie(Media):

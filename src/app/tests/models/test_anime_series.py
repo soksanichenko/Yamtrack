@@ -1,18 +1,24 @@
 """Tests for AnimeSeries model properties and builder guard logic."""
+
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
 
+from app.anime_series_builder import (
+    build_related_for_series,
+    lazy_build_from_search_results,
+)
 from app.models import (
     Anime,
     AnimeEpisode,
+    AnimeSeries,
     AnimeSeriesLink,
     AnimeSeriesRelation,
-    AnimeSeries,
     Item,
     MediaManager,
     MediaTypes,
@@ -24,31 +30,31 @@ from users.models import HomeSortChoices
 
 # Minimal metadata returned when Anime.save() calls process_progress / process_status
 _ANIME_META_STUB = {
-    'max_progress': None,
-    'episodes': [],
-    'title': 'Stub',
-    'image': '',
-    'related': {},
+    "max_progress": None,
+    "episodes": [],
+    "title": "Stub",
+    "image": "",
+    "related": {},
 }
 
 
-def _make_anime_item(media_id: str, title: str = 'Anime') -> Item:
+def _make_anime_item(media_id: str, title: str = "Anime") -> Item:
     return Item.objects.create(
         media_id=media_id,
         source=Sources.MAL.value,
         media_type=MediaTypes.ANIME.value,
         title=title,
-        image='http://example.com/img.jpg',
+        image="http://example.com/img.jpg",
     )
 
 
-def _make_series_item(title: str = 'Series') -> Item:
+def _make_series_item(title: str = "Series") -> Item:
     return Item.objects.create(
         media_id=str(uuid.uuid4()),
         source=Sources.MAL.value,
         media_type=MediaTypes.ANIME_SERIES.value,
         title=title,
-        image='http://example.com/img.jpg',
+        image="http://example.com/img.jpg",
     )
 
 
@@ -56,69 +62,97 @@ class AnimeSeriesProgressTest(TestCase):
     """Tests for AnimeSeries.progress property."""
 
     def setUp(self):
-        self.user = get_user_model().objects.create_user(username='test', password='pw')
+        """Create the fixtures shared by the tests."""
+        self.credentials = {"username": "test", "password": "pw"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
 
-        self.series_item = _make_series_item('My Series')
-        self.season1 = _make_anime_item('1', 'Season 1')
-        self.season2 = _make_anime_item('2', 'Season 2')
-        self.extra = _make_anime_item('3', 'OVA')
+        self.series_item = _make_series_item("My Series")
+        self.season1 = _make_anime_item("1", "Season 1")
+        self.season2 = _make_anime_item("2", "Season 2")
+        self.extra = _make_anime_item("3", "OVA")
 
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.season1, order=1, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.season1,
+            order=1,
+            is_extra=False,
         )
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.season2, order=2, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.season2,
+            order=2,
+            is_extra=False,
         )
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.extra, order=3, is_extra=True,
+            series_item=self.series_item,
+            anime_item=self.extra,
+            order=3,
+            is_extra=True,
         )
 
         self.anime_series = AnimeSeries.objects.create(
-            item=self.series_item, user=self.user, status=Status.IN_PROGRESS.value,
+            item=self.series_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
         )
 
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
             self.a1 = Anime.objects.create(
-                item=self.season1, user=self.user,
-                status=Status.COMPLETED.value, related_series=self.anime_series,
+                item=self.season1,
+                user=self.user,
+                status=Status.COMPLETED.value,
+                related_series=self.anime_series,
             )
             self.a2 = Anime.objects.create(
-                item=self.season2, user=self.user,
-                status=Status.IN_PROGRESS.value, related_series=self.anime_series,
+                item=self.season2,
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+                related_series=self.anime_series,
             )
             self.a_extra = Anime.objects.create(
-                item=self.extra, user=self.user,
-                status=Status.COMPLETED.value, related_series=self.anime_series,
+                item=self.extra,
+                user=self.user,
+                status=Status.COMPLETED.value,
+                related_series=self.anime_series,
             )
 
     def test_progress_sums_episodes_of_main_seasons(self):
-        """progress = sum of episodes watched in non-extra seasons."""
-        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+        """Progress = sum of episodes watched in non-extra seasons."""
+        series = AnimeSeries.objects.prefetch_related("anime_seasons__item").get(
             pk=self.anime_series.pk,
         )
         # a1, a2 created with progress=0
         self.assertEqual(series.progress, 0)
 
     def test_progress_sums_episodes_with_watched(self):
-        """progress reflects actual episode counts across main seasons."""
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+        """Progress reflects actual episode counts across main seasons."""
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
             self.a1.progress = 13
-            self.a1.save(update_fields=['progress'])
+            self.a1.save(update_fields=["progress"])
             self.a2.progress = 5
-            self.a2.save(update_fields=['progress'])
+            self.a2.save(update_fields=["progress"])
 
-        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+        series = AnimeSeries.objects.prefetch_related("anime_seasons__item").get(
             pk=self.anime_series.pk,
         )
         self.assertEqual(series.progress, 18)
 
     def test_progress_with_injected_main_ids(self):
         """When _main_anime_ids is pre-set (batch annotation), progress uses it."""
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
             self.a1.progress = 13
-            self.a1.save(update_fields=['progress'])
+            self.a1.save(update_fields=["progress"])
 
-        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+        series = AnimeSeries.objects.prefetch_related("anime_seasons__item").get(
             pk=self.anime_series.pk,
         )
         series._main_anime_ids = {self.season1.id, self.season2.id}
@@ -126,11 +160,14 @@ class AnimeSeriesProgressTest(TestCase):
 
     def test_progress_extra_not_counted(self):
         """Episodes watched in extras do not count toward progress."""
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
             self.a_extra.progress = 6
-            self.a_extra.save(update_fields=['progress'])
+            self.a_extra.save(update_fields=["progress"])
 
-        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+        series = AnimeSeries.objects.prefetch_related("anime_seasons__item").get(
             pk=self.anime_series.pk,
         )
         self.assertEqual(series.progress, 0)
@@ -140,29 +177,46 @@ class AnimeSeriesLastWatchedTest(TestCase):
     """Tests for AnimeSeries.last_watched property."""
 
     def setUp(self):
-        self.user = get_user_model().objects.create_user(username='test', password='pw')
+        """Create the fixtures shared by the tests."""
+        self.credentials = {"username": "test", "password": "pw"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
         self.series_item = _make_series_item()
-        self.s1 = _make_anime_item('10', 'Season 1')
-        self.s2 = _make_anime_item('11', 'Season 2')
+        self.s1 = _make_anime_item("10", "Season 1")
+        self.s2 = _make_anime_item("11", "Season 2")
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s1, order=1, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.s1,
+            order=1,
+            is_extra=False,
         )
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s2, order=2, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.s2,
+            order=2,
+            is_extra=False,
         )
         self.anime_series = AnimeSeries.objects.create(
-            item=self.series_item, user=self.user, status=Status.IN_PROGRESS.value,
+            item=self.series_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
         )
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
             # a2 created first: completing a1 below would otherwise auto-track
             # a placeholder for a2 (see AutoTrackNextSeasonTest), duplicating it.
             self.a2 = Anime.objects.create(
-                item=self.s2, user=self.user,
-                status=Status.IN_PROGRESS.value, related_series=self.anime_series,
+                item=self.s2,
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+                related_series=self.anime_series,
             )
             self.a1 = Anime.objects.create(
-                item=self.s1, user=self.user,
-                status=Status.COMPLETED.value, related_series=self.anime_series,
+                item=self.s1,
+                user=self.user,
+                status=Status.COMPLETED.value,
+                related_series=self.anime_series,
             )
         # Set progressed_at directly via update to bypass save() hooks
         Anime.objects.filter(pk=self.a1.pk).update(
@@ -173,37 +227,41 @@ class AnimeSeriesLastWatchedTest(TestCase):
         )
 
     def test_last_watched_returns_most_recent_title(self):
-        """last_watched returns the title of the season with the latest progressed_at."""
-        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+        """last_watched returns the title of the latest progressed season."""
+        series = AnimeSeries.objects.prefetch_related("anime_seasons__item").get(
             pk=self.anime_series.pk,
         )
-        self.assertEqual(series.last_watched, 'Season 2')
+        self.assertEqual(series.last_watched, "Season 2")
 
     def test_last_watched_empty_when_no_seasons(self):
         """last_watched is empty string when no seasons are tracked."""
-        empty_series_item = _make_series_item('Empty')
+        empty_series_item = _make_series_item("Empty")
         anime_series = AnimeSeries.objects.create(
-            item=empty_series_item, user=self.user, status=Status.PLANNING.value,
+            item=empty_series_item,
+            user=self.user,
+            status=Status.PLANNING.value,
         )
-        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+        series = AnimeSeries.objects.prefetch_related("anime_seasons__item").get(
             pk=anime_series.pk,
         )
-        self.assertEqual(series.last_watched, '')
+        self.assertEqual(series.last_watched, "")
 
     def test_current_season_returns_most_recently_progressed(self):
         """current_season prefers the season with the latest progressed_at."""
-        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+        series = AnimeSeries.objects.prefetch_related("anime_seasons__item").get(
             pk=self.anime_series.pk,
         )
         self.assertEqual(series.current_season.pk, self.a2.pk)
 
     def test_current_season_none_when_no_seasons(self):
         """current_season is None when the series has no seasons at all."""
-        empty_series_item = _make_series_item('Empty')
+        empty_series_item = _make_series_item("Empty")
         anime_series = AnimeSeries.objects.create(
-            item=empty_series_item, user=self.user, status=Status.PLANNING.value,
+            item=empty_series_item,
+            user=self.user,
+            status=Status.PLANNING.value,
         )
-        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+        series = AnimeSeries.objects.prefetch_related("anime_seasons__item").get(
             pk=anime_series.pk,
         )
         self.assertIsNone(series.current_season)
@@ -213,19 +271,19 @@ class BuildRelatedGuardTest(TestCase):
     """Tests for build_related_for_series guard logic."""
 
     def setUp(self):
-        self.series_item = _make_series_item('Series A')
-        self.other_item = _make_series_item('Series B')
+        """Create the fixtures shared by the tests."""
+        self.series_item = _make_series_item("Series A")
+        self.other_item = _make_series_item("Series B")
 
     def test_guard_skips_when_from_series_relation_exists(self):
         """build_related_for_series is a no-op when a from_series relation exists."""
         AnimeSeriesRelation.objects.create(
             from_series=self.series_item,
             to_series=self.other_item,
-            relation_type='alternative_version',
+            relation_type="alternative_version",
         )
 
-        with patch('app.providers.services.get_media_metadata') as mock_meta:
-            from app.anime_series_builder import build_related_for_series
+        with patch("app.providers.services.get_media_metadata") as mock_meta:
             build_related_for_series(self.series_item, Sources.MAL.value)
             mock_meta.assert_not_called()
 
@@ -234,55 +292,65 @@ class BuildRelatedGuardTest(TestCase):
         AnimeSeriesRelation.objects.create(
             from_series=self.other_item,
             to_series=self.series_item,
-            relation_type='adaptation',
+            relation_type="adaptation",
         )
 
-        with patch('app.providers.services.get_media_metadata') as mock_meta:
-            from app.anime_series_builder import build_related_for_series
+        with patch("app.providers.services.get_media_metadata") as mock_meta:
             build_related_for_series(self.series_item, Sources.MAL.value)
             mock_meta.assert_not_called()
 
     def test_no_members_means_no_api_calls(self):
         """Series with no AnimeSeriesLink members makes no metadata requests."""
-        with patch('app.providers.services.get_media_metadata') as mock_meta:
-            from app.anime_series_builder import build_related_for_series
+        with patch("app.providers.services.get_media_metadata") as mock_meta:
             build_related_for_series(self.series_item, Sources.MAL.value)
             mock_meta.assert_not_called()
 
     def test_creates_bidirectional_relations(self):
         """Relations are created in both directions for a found alternative link."""
-        anime_item = _make_anime_item('42', 'Root Anime')
+        anime_item = _make_anime_item("42", "Root Anime")
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=anime_item, order=1, is_extra=False,
+            series_item=self.series_item,
+            anime_item=anime_item,
+            order=1,
+            is_extra=False,
         )
 
-        related_anime_item = _make_anime_item('99', 'Related Anime')
+        related_anime_item = _make_anime_item("99", "Related Anime")
         # Pre-create a series for the related anime (so no BFS needed)
         AnimeSeriesLink.objects.create(
-            series_item=self.other_item, anime_item=related_anime_item, order=1, is_extra=False,
+            series_item=self.other_item,
+            anime_item=related_anime_item,
+            order=1,
+            is_extra=False,
         )
 
         alt_meta = {
-            'title': 'Root Anime', 'image': '',
-            'related': {
-                'related_anime': [
-                    {'media_id': '99', 'relation_type': 'alternative_version', 'title': 'Related Anime'},
+            "title": "Root Anime",
+            "image": "",
+            "related": {
+                "related_anime": [
+                    {
+                        "media_id": "99",
+                        "relation_type": "alternative_version",
+                        "title": "Related Anime",
+                    },
                 ],
             },
         }
 
-        with patch('app.providers.services.get_media_metadata', return_value=alt_meta):
-            from app.anime_series_builder import build_related_for_series
+        with patch("app.providers.services.get_media_metadata", return_value=alt_meta):
             build_related_for_series(self.series_item, Sources.MAL.value)
 
         self.assertTrue(
             AnimeSeriesRelation.objects.filter(
-                from_series=self.series_item, to_series=self.other_item,
+                from_series=self.series_item,
+                to_series=self.other_item,
             ).exists(),
         )
         self.assertTrue(
             AnimeSeriesRelation.objects.filter(
-                from_series=self.other_item, to_series=self.series_item,
+                from_series=self.other_item,
+                to_series=self.series_item,
             ).exists(),
         )
 
@@ -291,19 +359,23 @@ class AnnotateAnimeSeriesProgressTest(TestCase):
     """Tests for MediaManager._annotate_animeseries_progress priority chain."""
 
     def setUp(self):
-        self.user = get_user_model().objects.create_user(username='test', password='pw')
-        self.series_item = _make_series_item('Series')
-        self.s1 = _make_anime_item('101', 'Season 1')
-        self.s2 = _make_anime_item('102', 'Season 2')
-        self.s3 = _make_anime_item('103', 'Season 3')
+        """Create the fixtures shared by the tests."""
+        self.credentials = {"username": "test", "password": "pw"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.series_item = _make_series_item("Series")
+        self.s1 = _make_anime_item("101", "Season 1")
+        self.s2 = _make_anime_item("102", "Season 2")
+        self.s3 = _make_anime_item("103", "Season 3")
 
         self.anime_series = AnimeSeries.objects.create(
-            item=self.series_item, user=self.user, status=Status.IN_PROGRESS.value,
+            item=self.series_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
         )
 
     def _annotate(self):
         series_list = list(
-            AnimeSeries.objects.filter(pk=self.anime_series.pk).select_related('item'),
+            AnimeSeries.objects.filter(pk=self.anime_series.pk).select_related("item"),
         )
         MediaManager()._annotate_animeseries_progress(series_list)
         return series_list[0]
@@ -311,12 +383,18 @@ class AnnotateAnimeSeriesProgressTest(TestCase):
     def test_uses_total_episodes_from_link(self):
         """Priority 1: total_episodes stored in AnimeSeriesLink is used directly."""
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s1, order=1,
-            is_extra=False, total_episodes=25,
+            series_item=self.series_item,
+            anime_item=self.s1,
+            order=1,
+            is_extra=False,
+            total_episodes=25,
         )
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s2, order=2,
-            is_extra=False, total_episodes=12,
+            series_item=self.series_item,
+            anime_item=self.s2,
+            order=2,
+            is_extra=False,
+            total_episodes=12,
         )
         series = self._annotate()
         self.assertEqual(series.max_progress, 37)
@@ -324,8 +402,11 @@ class AnnotateAnimeSeriesProgressTest(TestCase):
     def test_falls_back_to_events_when_no_link_total(self):
         """Priority 2: calendar events used when total_episodes is null."""
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s1, order=1,
-            is_extra=False, total_episodes=None,
+            series_item=self.series_item,
+            anime_item=self.s1,
+            order=1,
+            is_extra=False,
+            total_episodes=None,
         )
         Event.objects.create(
             item=self.s1,
@@ -344,25 +425,35 @@ class AnnotateAnimeSeriesProgressTest(TestCase):
         self.assertEqual(series.max_progress, 25)
 
     def test_falls_back_to_anime_episodes_when_no_events(self):
-        """Priority 3: AnimeEpisode count used when neither link total nor events exist."""
+        """Priority 3: AnimeEpisode count used without link total and events."""
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s1, order=1,
-            is_extra=False, total_episodes=None,
+            series_item=self.series_item,
+            anime_item=self.s1,
+            order=1,
+            is_extra=False,
+            total_episodes=None,
         )
         for i in range(13):
             AnimeEpisode.objects.create(
-                anime_item=self.s1, episode_number=i + 1, is_special=False,
+                anime_item=self.s1,
+                episode_number=i + 1,
+                is_special=False,
             )
         # Specials must not count
-        AnimeEpisode.objects.create(anime_item=self.s1, episode_number=0, is_special=True)
+        AnimeEpisode.objects.create(
+            anime_item=self.s1, episode_number=0, is_special=True
+        )
         series = self._annotate()
         self.assertEqual(series.max_progress, 13)
 
     def test_link_total_takes_priority_over_events(self):
         """total_episodes from link overrides calendar events."""
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s1, order=1,
-            is_extra=False, total_episodes=25,
+            series_item=self.series_item,
+            anime_item=self.s1,
+            order=1,
+            is_extra=False,
+            total_episodes=25,
         )
         Event.objects.create(
             item=self.s1,
@@ -376,12 +467,18 @@ class AnnotateAnimeSeriesProgressTest(TestCase):
     def test_extra_links_excluded(self):
         """Extra AnimeSeriesLink members are not counted in max_progress."""
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s1, order=1,
-            is_extra=False, total_episodes=24,
+            series_item=self.series_item,
+            anime_item=self.s1,
+            order=1,
+            is_extra=False,
+            total_episodes=24,
         )
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s2, order=2,
-            is_extra=True, total_episodes=4,
+            series_item=self.series_item,
+            anime_item=self.s2,
+            order=2,
+            is_extra=True,
+            total_episodes=4,
         )
         series = self._annotate()
         self.assertEqual(series.max_progress, 24)
@@ -391,35 +488,49 @@ class AnimeSeriesProgressDedupTest(TestCase):
     """Tests for AnimeSeries.progress deduplication by item_id."""
 
     def setUp(self):
-        self.user = get_user_model().objects.create_user(username='test', password='pw')
-        self.series_item = _make_series_item('Series')
-        self.anime_item = _make_anime_item('200', 'Season 1')
+        """Create the fixtures shared by the tests."""
+        self.credentials = {"username": "test", "password": "pw"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.series_item = _make_series_item("Series")
+        self.anime_item = _make_anime_item("200", "Season 1")
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.anime_item, order=1, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.anime_item,
+            order=1,
+            is_extra=False,
         )
         self.anime_series = AnimeSeries.objects.create(
-            item=self.series_item, user=self.user, status=Status.IN_PROGRESS.value,
+            item=self.series_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
         )
 
     def test_deduplicates_duplicate_anime_takes_max_progress(self):
-        """When two Anime rows share the same item_id, progress uses the higher value."""
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+        """Two Anime rows with the same item_id: progress uses the higher value."""
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
             a1 = Anime.objects.create(
-                item=self.anime_item, user=self.user,
-                status=Status.IN_PROGRESS.value, related_series=self.anime_series,
+                item=self.anime_item,
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+                related_series=self.anime_series,
             )
-            # Bypass unique constraint by creating a second with a temp item then re-pointing
-            dup_item = _make_anime_item('tmp-200', 'Season 1 dup')
+            # Bypass the unique constraint: create with a temp item, then re-point
+            dup_item = _make_anime_item("tmp-200", "Season 1 dup")
             a2 = Anime.objects.create(
-                item=dup_item, user=self.user,
-                status=Status.IN_PROGRESS.value, related_series=self.anime_series,
+                item=dup_item,
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+                related_series=self.anime_series,
             )
 
         # Simulate the duplicate-item scenario by forcing item_id equality via update
         Anime.objects.filter(pk=a1.pk).update(progress=5)
         Anime.objects.filter(pk=a2.pk).update(progress=10, item=self.anime_item)
 
-        series = AnimeSeries.objects.prefetch_related('anime_seasons__item').get(
+        series = AnimeSeries.objects.prefetch_related("anime_seasons__item").get(
             pk=self.anime_series.pk,
         )
         # Only one item_id in main_ids → max(5, 10) = 10
@@ -431,38 +542,63 @@ class LazyBuildFromSearchTest(TestCase):
 
     def test_creates_series_item_and_links_for_single_member(self):
         """Single-member group gets a series Item with one AnimeSeriesLink."""
-        from app.anime_series_builder import lazy_build_from_search_results
-
-        members = [{'media_id': '1001', 'title': 'My Anime', 'image': '', 'start_date': '2020-04-01'}]
-        series_item = lazy_build_from_search_results(members, Sources.MAL.value)
-
-        self.assertEqual(series_item.media_type, MediaTypes.ANIME_SERIES.value)
-        self.assertEqual(AnimeSeriesLink.objects.filter(series_item=series_item).count(), 1)
-        link = AnimeSeriesLink.objects.get(series_item=series_item)
-        self.assertFalse(link.is_extra)
-        self.assertEqual(link.anime_item.media_id, '1001')
-
-    def test_members_sorted_by_start_date(self):
-        """Members are linked in ascending start_date order."""
-        from app.anime_series_builder import lazy_build_from_search_results
-
         members = [
-            {'media_id': '2002', 'title': 'Season 2', 'image': '', 'start_date': '2022-01-01'},
-            {'media_id': '2001', 'title': 'Season 1', 'image': '', 'start_date': '2020-01-01'},
+            {
+                "media_id": "1001",
+                "title": "My Anime",
+                "image": "",
+                "start_date": "2020-04-01",
+            }
         ]
         series_item = lazy_build_from_search_results(members, Sources.MAL.value)
 
-        links = list(AnimeSeriesLink.objects.filter(series_item=series_item).order_by('order'))
-        self.assertEqual(links[0].anime_item.media_id, '2001')
-        self.assertEqual(links[1].anime_item.media_id, '2002')
+        self.assertEqual(series_item.media_type, MediaTypes.ANIME_SERIES.value)
+        self.assertEqual(
+            AnimeSeriesLink.objects.filter(series_item=series_item).count(), 1
+        )
+        link = AnimeSeriesLink.objects.get(series_item=series_item)
+        self.assertFalse(link.is_extra)
+        self.assertEqual(link.anime_item.media_id, "1001")
+
+    def test_members_sorted_by_start_date(self):
+        """Members are linked in ascending start_date order."""
+        members = [
+            {
+                "media_id": "2002",
+                "title": "Season 2",
+                "image": "",
+                "start_date": "2022-01-01",
+            },
+            {
+                "media_id": "2001",
+                "title": "Season 1",
+                "image": "",
+                "start_date": "2020-01-01",
+            },
+        ]
+        series_item = lazy_build_from_search_results(members, Sources.MAL.value)
+
+        links = list(
+            AnimeSeriesLink.objects.filter(series_item=series_item).order_by("order")
+        )
+        self.assertEqual(links[0].anime_item.media_id, "2001")
+        self.assertEqual(links[1].anime_item.media_id, "2002")
 
     def test_idempotent_second_call_does_not_duplicate(self):
-        """Calling twice with the same members returns the same series, no duplicate links."""
-        from app.anime_series_builder import lazy_build_from_search_results
-
+        """Calling twice with the same members returns one series, no extra links."""
         members = [
-            {'media_id': '3001', 'title': 'Anime A', 'image': '', 'start_date': '2021-01-01'},
-            {'media_id': '3002', 'title': 'Anime B', 'image': '', 'start_date': '2022-01-01'},
+            {
+                "media_id": "3001",
+                "title": "Anime A",
+                "image": "",
+                "start_date": "2021-01-01",
+            },
+            {
+                "media_id": "3002",
+                "title": "Anime B",
+                "image": "",
+                "start_date": "2022-01-01",
+            },
         ]
         item1 = lazy_build_from_search_results(members, Sources.MAL.value)
         item2 = lazy_build_from_search_results(members, Sources.MAL.value)
@@ -472,55 +608,87 @@ class LazyBuildFromSearchTest(TestCase):
 
     def test_extends_existing_series_when_member_already_linked(self):
         """If one member is already in a series, newcomers are added to that series."""
-        from app.anime_series_builder import lazy_build_from_search_results
-
         existing_anime = Item.objects.create(
-            media_id='4001', source=Sources.MAL.value,
-            media_type=MediaTypes.ANIME.value, title='Existing', image='',
+            media_id="4001",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Existing",
+            image="",
         )
         existing_series = Item.objects.create(
-            media_id=str(uuid.uuid4()), source=Sources.MAL.value,
-            media_type=MediaTypes.ANIME_SERIES.value, title='Existing Series', image='',
+            media_id=str(uuid.uuid4()),
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME_SERIES.value,
+            title="Existing Series",
+            image="",
         )
         AnimeSeriesLink.objects.create(
-            series_item=existing_series, anime_item=existing_anime, order=1, is_extra=False,
+            series_item=existing_series,
+            anime_item=existing_anime,
+            order=1,
+            is_extra=False,
         )
 
         members = [
-            {'media_id': '4001', 'title': 'Existing', 'image': '', 'start_date': '2020-01-01'},
-            {'media_id': '4002', 'title': 'Sequel', 'image': '', 'start_date': '2022-01-01'},
+            {
+                "media_id": "4001",
+                "title": "Existing",
+                "image": "",
+                "start_date": "2020-01-01",
+            },
+            {
+                "media_id": "4002",
+                "title": "Sequel",
+                "image": "",
+                "start_date": "2022-01-01",
+            },
         ]
         series_item = lazy_build_from_search_results(members, Sources.MAL.value)
 
         self.assertEqual(series_item.pk, existing_series.pk)
-        self.assertEqual(AnimeSeriesLink.objects.filter(series_item=series_item).count(), 2)
+        self.assertEqual(
+            AnimeSeriesLink.objects.filter(series_item=series_item).count(), 2
+        )
 
 
 class AnimeSeriesHomeBucketingTest(TestCase):
     """Tests for how get_home_status buckets anime grouped into a series."""
 
     def setUp(self):
-        self.user = get_user_model().objects.create_user(username='home_bucket', password='pw')
+        """Create the fixtures shared by the tests."""
+        self.credentials = {"username": "home_bucket", "password": "pw"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
 
-        self.series_item = _make_series_item('My Series')
-        self.season1 = _make_anime_item('h1', 'Season 1')
-        self.standalone_item = _make_anime_item('h2', 'Standalone Anime')
+        self.series_item = _make_series_item("My Series")
+        self.season1 = _make_anime_item("h1", "Season 1")
+        self.standalone_item = _make_anime_item("h2", "Standalone Anime")
 
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.season1, order=1, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.season1,
+            order=1,
+            is_extra=False,
         )
 
         self.anime_series = AnimeSeries.objects.create(
-            item=self.series_item, user=self.user, status=Status.IN_PROGRESS.value,
+            item=self.series_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
         )
 
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
             self.season1_anime = Anime.objects.create(
-                item=self.season1, user=self.user,
-                status=Status.IN_PROGRESS.value, related_series=self.anime_series,
+                item=self.season1,
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+                related_series=self.anime_series,
             )
             self.standalone = Anime.objects.create(
-                item=self.standalone_item, user=self.user,
+                item=self.standalone_item,
+                user=self.user,
                 status=Status.IN_PROGRESS.value,
             )
 
@@ -528,20 +696,24 @@ class AnimeSeriesHomeBucketingTest(TestCase):
         """Anime linked to a series isn't also listed under the plain Anime bucket."""
         manager = MediaManager()
         home_status = manager.get_home_status(
-            user=self.user, status=Status.IN_PROGRESS.value,
-            sort_by=HomeSortChoices.UPCOMING, items_limit=14,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            sort_by=HomeSortChoices.UPCOMING,
+            items_limit=14,
         )
-        anime_items = home_status[MediaTypes.ANIME.value]['items']
+        anime_items = home_status[MediaTypes.ANIME.value]["items"]
         self.assertEqual([m.item_id for m in anime_items], [self.standalone.item_id])
 
     def test_series_bucketed_by_its_own_status_shows_current_season(self):
         """Bucketed by the series' status, showing its current season's own card."""
         manager = MediaManager()
         home_status = manager.get_home_status(
-            user=self.user, status=Status.IN_PROGRESS.value,
-            sort_by=HomeSortChoices.UPCOMING, items_limit=14,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            sort_by=HomeSortChoices.UPCOMING,
+            items_limit=14,
         )
-        series_section_items = home_status[MediaTypes.ANIME_SERIES.value]['items']
+        series_section_items = home_status[MediaTypes.ANIME_SERIES.value]["items"]
         self.assertEqual(
             [m.item_id for m in series_section_items],
             [self.season1_anime.item_id],
@@ -601,39 +773,53 @@ class BackfillAnimeSeriesStatusCommandTest(TestCase):
     """Tests for the backfill_anime_series_status management command."""
 
     def setUp(self):
-        self.user = get_user_model().objects.create_user(username='backfill', password='pw')
-        self.series_item = _make_series_item('Stale Series')
-        self.s1 = _make_anime_item('b1', 'Season 1')
-        self.s2 = _make_anime_item('b2', 'Season 2')
+        """Create the fixtures shared by the tests."""
+        self.credentials = {"username": "backfill", "password": "pw"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.series_item = _make_series_item("Stale Series")
+        self.s1 = _make_anime_item("b1", "Season 1")
+        self.s2 = _make_anime_item("b2", "Season 2")
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s1, order=1, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.s1,
+            order=1,
+            is_extra=False,
         )
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s2, order=2, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.s2,
+            order=2,
+            is_extra=False,
         )
         # Series stuck at Planning even though both seasons are done tracking-wise.
         self.anime_series = AnimeSeries.objects.create(
-            item=self.series_item, user=self.user, status=Status.PLANNING.value,
+            item=self.series_item,
+            user=self.user,
+            status=Status.PLANNING.value,
         )
         # Bypass save() hooks (bulk_update-style) so the stale status isn't
         # corrected as a side effect of creating these, mirroring how a builder
         # backfill can leave a series out of sync.
-        Anime.objects.bulk_create([
-            Anime(
-                item=self.s1, user=self.user,
-                status=Status.COMPLETED.value, related_series=self.anime_series,
-            ),
-            Anime(
-                item=self.s2, user=self.user,
-                status=Status.PLANNING.value, related_series=self.anime_series,
-            ),
-        ])
+        Anime.objects.bulk_create(
+            [
+                Anime(
+                    item=self.s1,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    related_series=self.anime_series,
+                ),
+                Anime(
+                    item=self.s2,
+                    user=self.user,
+                    status=Status.PLANNING.value,
+                    related_series=self.anime_series,
+                ),
+            ]
+        )
 
     def test_recomputes_stale_status(self):
         """The command corrects a series whose status no longer matches its seasons."""
-        from django.core.management import call_command
-
-        call_command('backfill_anime_series_status')
+        call_command("backfill_anime_series_status")
         self.anime_series.refresh_from_db()
         self.assertEqual(self.anime_series.status, Status.IN_PROGRESS.value)
 
@@ -642,15 +828,23 @@ class RecomputeCatchesUpNextSeasonTest(TestCase):
     """Recompute should catch up series whose completion predates auto-tracking."""
 
     def setUp(self):
-        self.user = get_user_model().objects.create_user(username='catchup', password='pw')
-        self.series_item = _make_series_item('Old Franchise')
-        self.s1 = _make_anime_item('c1', 'Season 1')
-        self.s2 = _make_anime_item('c2', 'Season 2')
+        """Create the fixtures shared by the tests."""
+        self.credentials = {"username": "catchup", "password": "pw"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.series_item = _make_series_item("Old Franchise")
+        self.s1 = _make_anime_item("c1", "Season 1")
+        self.s2 = _make_anime_item("c2", "Season 2")
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s1, order=1, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.s1,
+            order=1,
+            is_extra=False,
         )
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s2, order=2, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.s2,
+            order=2,
+            is_extra=False,
         )
         # Series completed and stuck that way: only season 1 was ever tracked,
         # finished before next-season auto-tracking existed. Season 2's link
@@ -658,21 +852,28 @@ class RecomputeCatchesUpNextSeasonTest(TestCase):
         # nobody is tracking it yet -- bulk_create bypasses save() hooks so no
         # auto-tracking fires here, mirroring the pre-fix history.
         self.anime_series = AnimeSeries.objects.create(
-            item=self.series_item, user=self.user, status=Status.COMPLETED.value,
+            item=self.series_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
         )
-        Anime.objects.bulk_create([
-            Anime(
-                item=self.s1, user=self.user,
-                status=Status.COMPLETED.value, related_series=self.anime_series,
-            ),
-        ])
+        Anime.objects.bulk_create(
+            [
+                Anime(
+                    item=self.s1,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    related_series=self.anime_series,
+                ),
+            ]
+        )
 
     def test_recompute_tracks_next_season_and_reopens_series(self):
         """Recompute starts tracking season 2 and the series becomes in progress."""
-        from django.core.management import call_command
-
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
-            call_command('backfill_anime_series_status')
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
+            call_command("backfill_anime_series_status")
 
         season2 = Anime.objects.get(user=self.user, item=self.s2)
         self.assertEqual(season2.status, Status.IN_PROGRESS.value)
@@ -684,11 +885,12 @@ class RecomputeCatchesUpNextSeasonTest(TestCase):
 
     def test_recompute_is_idempotent(self):
         """Running recompute twice doesn't create a second season-2 entry."""
-        from django.core.management import call_command
-
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
-            call_command('backfill_anime_series_status')
-            call_command('backfill_anime_series_status')
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
+            call_command("backfill_anime_series_status")
+            call_command("backfill_anime_series_status")
 
         self.assertEqual(Anime.objects.filter(user=self.user, item=self.s2).count(), 1)
 
@@ -697,30 +899,48 @@ class AutoTrackNextSeasonTest(TestCase):
     """Tests for auto-tracking the next main season when one is completed."""
 
     def setUp(self):
-        self.user = get_user_model().objects.create_user(username='next_season', password='pw')
-        self.series_item = _make_series_item('Franchise')
-        self.s1 = _make_anime_item('n1', 'Season 1')
-        self.extra = _make_anime_item('n2', 'OVA')
-        self.s2 = _make_anime_item('n3', 'Season 2')
+        """Create the fixtures shared by the tests."""
+        self.credentials = {"username": "next_season", "password": "pw"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.series_item = _make_series_item("Franchise")
+        self.s1 = _make_anime_item("n1", "Season 1")
+        self.extra = _make_anime_item("n2", "OVA")
+        self.s2 = _make_anime_item("n3", "Season 2")
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s1, order=1, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.s1,
+            order=1,
+            is_extra=False,
         )
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.extra, order=2, is_extra=True,
+            series_item=self.series_item,
+            anime_item=self.extra,
+            order=2,
+            is_extra=True,
         )
         AnimeSeriesLink.objects.create(
-            series_item=self.series_item, anime_item=self.s2, order=3, is_extra=False,
+            series_item=self.series_item,
+            anime_item=self.s2,
+            order=3,
+            is_extra=False,
         )
         self.anime_series = AnimeSeries.objects.create(
-            item=self.series_item, user=self.user, status=Status.PLANNING.value,
+            item=self.series_item,
+            user=self.user,
+            status=Status.PLANNING.value,
         )
 
     def test_completing_season_tracks_next_main_season(self):
         """Completing season 1 starts tracking season 2, skipping the OVA."""
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
             Anime.objects.create(
-                item=self.s1, user=self.user,
-                status=Status.COMPLETED.value, related_series=self.anime_series,
+                item=self.s1,
+                user=self.user,
+                status=Status.COMPLETED.value,
+                related_series=self.anime_series,
             )
 
         next_season = Anime.objects.get(user=self.user, item=self.s2)
@@ -731,23 +951,35 @@ class AutoTrackNextSeasonTest(TestCase):
 
     def test_does_not_duplicate_already_tracked_next_season(self):
         """If the next season is already tracked, no duplicate is created."""
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
             Anime.objects.create(
-                item=self.s2, user=self.user,
-                status=Status.PLANNING.value, related_series=self.anime_series,
+                item=self.s2,
+                user=self.user,
+                status=Status.PLANNING.value,
+                related_series=self.anime_series,
             )
             Anime.objects.create(
-                item=self.s1, user=self.user,
-                status=Status.COMPLETED.value, related_series=self.anime_series,
+                item=self.s1,
+                user=self.user,
+                status=Status.COMPLETED.value,
+                related_series=self.anime_series,
             )
         self.assertEqual(Anime.objects.filter(user=self.user, item=self.s2).count(), 1)
 
     def test_no_next_season_when_completing_the_last_one(self):
         """Completing the final season in the franchise creates nothing new."""
-        with patch('app.models.providers.services.get_media_metadata', return_value=_ANIME_META_STUB):
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value=_ANIME_META_STUB,
+        ):
             Anime.objects.create(
-                item=self.s2, user=self.user,
-                status=Status.COMPLETED.value, related_series=self.anime_series,
+                item=self.s2,
+                user=self.user,
+                status=Status.COMPLETED.value,
+                related_series=self.anime_series,
             )
         self.assertEqual(Anime.objects.filter(user=self.user).count(), 1)
 
@@ -756,17 +988,19 @@ class AutoTrackNextSeasonTest(TestCase):
 
         def fake_metadata(_media_type, media_id, _source):
             if media_id == self.s2.media_id:
-                msg = 'provider down'
+                msg = "provider down"
                 raise Exception(msg)  # noqa: TRY002
             return _ANIME_META_STUB
 
         with patch(
-            'app.models.providers.services.get_media_metadata',
+            "app.models.providers.services.get_media_metadata",
             side_effect=fake_metadata,
         ):
             season1 = Anime.objects.create(
-                item=self.s1, user=self.user,
-                status=Status.COMPLETED.value, related_series=self.anime_series,
+                item=self.s1,
+                user=self.user,
+                status=Status.COMPLETED.value,
+                related_series=self.anime_series,
             )
 
         season1.refresh_from_db()

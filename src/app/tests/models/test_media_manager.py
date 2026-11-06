@@ -864,15 +864,21 @@ class MediaManagerTests(TestCase):
     def test_annotate_max_progress_anime_falls_back_to_episode_count(self):
         """When no events exist, annotate_max_progress uses AnimeEpisode count."""
         manager = MediaManager()
-        anime_list = list(Anime.objects.filter(user=self.user.id).select_related('item'))
+        anime_list = list(
+            Anime.objects.filter(user=self.user.id).select_related("item")
+        )
 
         # No events — max_progress should come from AnimeEpisode records
         for i in range(12):
             AnimeEpisode.objects.create(
-                anime_item=self.anime_item, episode_number=i + 1, is_special=False,
+                anime_item=self.anime_item,
+                episode_number=i + 1,
+                is_special=False,
             )
         # Specials must not count
-        AnimeEpisode.objects.create(anime_item=self.anime_item, episode_number=0, is_special=True)
+        AnimeEpisode.objects.create(
+            anime_item=self.anime_item, episode_number=0, is_special=True
+        )
 
         manager.annotate_max_progress(anime_list, MediaTypes.ANIME.value)
         self.assertEqual(anime_list[0].max_progress, 12)

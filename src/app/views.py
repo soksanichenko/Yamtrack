@@ -1,4 +1,5 @@
 import logging
+from itertools import groupby
 from pathlib import Path
 
 from django.apps import apps
@@ -264,14 +265,13 @@ def media_search(request):
     # so group by media_type and enrich each group separately, then flatten.
     if data.get("results"):
         if media_type == MediaTypes.ANIME_SERIES.value:
-            from itertools import groupby
             enriched = []
-            keyfn = lambda r: r['media_type']  # noqa: E731
-            for _, group in groupby(sorted(data['results'], key=keyfn), key=keyfn):
+            keyfn = lambda r: r["media_type"]  # noqa: E731
+            for _, group in groupby(sorted(data["results"], key=keyfn), key=keyfn):
                 enriched.extend(
-                    helpers.enrich_items_with_user_data(request, list(group), 'search')
+                    helpers.enrich_items_with_user_data(request, list(group), "search")
                 )
-            data['results'] = enriched
+            data["results"] = enriched
         else:
             data["results"] = helpers.enrich_items_with_user_data(
                 request, data["results"], "search"
@@ -329,7 +329,9 @@ def media_details(request, source, media_type, media_id, title):  # noqa: ARG001
     anime_series_nav = None
     if request.user.is_authenticated and media_type == MediaTypes.ANIME.value:
         anime_series_nav = _get_anime_series_nav(
-            request.user, source, anime_media_id=media_id,
+            request.user,
+            source,
+            anime_media_id=media_id,
         )
 
     context = {
@@ -749,28 +751,30 @@ def anime_episode_toggle(request):
     Creates or deletes a WatchedAnimeEpisode record, then syncs Anime.progress.
     """
     if not request.user.is_authenticated:
-        return HttpResponseBadRequest('Login required')
+        return HttpResponseBadRequest("Login required")
 
-    item_pk = request.POST.get('item_pk')
-    episode_pk = request.POST.get('episode_pk')
+    item_pk = request.POST.get("item_pk")
+    episode_pk = request.POST.get("episode_pk")
 
     try:
         item = Item.objects.get(pk=item_pk, media_type=MediaTypes.ANIME.value)
         episode = AnimeEpisode.objects.get(pk=episode_pk, anime_item=item)
     except (Item.DoesNotExist, AnimeEpisode.DoesNotExist, ValueError):
-        return HttpResponseBadRequest('Invalid item or episode')
+        return HttpResponseBadRequest("Invalid item or episode")
 
     anime, _ = Anime.objects.get_or_create(
         item=item,
         user=request.user,
-        defaults={'status': Status.IN_PROGRESS.value},
+        defaults={"status": Status.IN_PROGRESS.value},
     )
 
     existing = WatchedAnimeEpisode.objects.filter(anime=anime, episode=episode).first()
     if existing:
         existing.delete()
     else:
-        WatchedAnimeEpisode.objects.create(user=request.user, anime=anime, episode=episode)
+        WatchedAnimeEpisode.objects.create(
+            user=request.user, anime=anime, episode=episode
+        )
 
     anime._sync_progress()
     return helpers.redirect_back(request)
@@ -1063,13 +1067,11 @@ def _get_anime_series_nav(
     Returns None if no series membership is found.
     """
     if series_media_id:
-        series_item = (
-            Item.objects.filter(
-                media_id=series_media_id,
-                media_type=MediaTypes.ANIME_SERIES.value,
-                source=source,
-            ).first()
-        )
+        series_item = Item.objects.filter(
+            media_id=series_media_id,
+            media_type=MediaTypes.ANIME_SERIES.value,
+            source=source,
+        ).first()
         if not series_item:
             return None
         current_media_id = None
@@ -1079,7 +1081,7 @@ def _get_anime_series_nav(
                 anime_item__media_id=anime_media_id,
                 anime_item__source=source,
             )
-            .select_related('series_item')
+            .select_related("series_item")
             .first()
         )
         if not series_link:
@@ -1089,8 +1091,8 @@ def _get_anime_series_nav(
 
     all_links = list(
         AnimeSeriesLink.objects.filter(series_item=series_item)
-        .select_related('anime_item')
-        .order_by('order', 'anime_item__title')
+        .select_related("anime_item")
+        .order_by("order", "anime_item__title")
     )
 
     tracked = {
@@ -1102,13 +1104,13 @@ def _get_anime_series_nav(
     }
 
     return {
-        'series_item': series_item,
-        'members': [
+        "series_item": series_item,
+        "members": [
             {
-                'item': lnk.anime_item,
-                'media': tracked.get(lnk.anime_item_id),
-                'is_extra': lnk.is_extra,
-                'is_current': lnk.anime_item.media_id == current_media_id,
+                "item": lnk.anime_item,
+                "media": tracked.get(lnk.anime_item_id),
+                "is_extra": lnk.is_extra,
+                "is_current": lnk.anime_item.media_id == current_media_id,
             }
             for lnk in all_links
         ],
@@ -1118,7 +1120,9 @@ def _get_anime_series_nav(
 _ALTERNATIVE_RELATION_TYPES = frozenset({"alternative_version", "spin_off"})
 
 
-def _enrich_anime_episodes(media_metadata: dict, current_instance: Anime | None) -> None:
+def _enrich_anime_episodes(
+    media_metadata: dict, current_instance: Anime | None
+) -> None:
     """Populate media_metadata['episodes'] with per-episode watched status.
 
     Lazily fetches episode data from Simkl on first call.
@@ -1127,28 +1131,29 @@ def _enrich_anime_episodes(media_metadata: dict, current_instance: Anime | None)
     """
     # Get or create the Item so episode fetch works even for untracked anime.
     item, _ = Item.objects.get_or_create(
-        media_id=media_metadata['media_id'],
+        media_id=media_metadata["media_id"],
         media_type=MediaTypes.ANIME.value,
-        source=media_metadata['source'],
+        source=media_metadata["source"],
         defaults={
-            'title': media_metadata.get('title', ''),
-            'image': media_metadata.get('image', ''),
+            "title": media_metadata.get("title", ""),
+            "image": media_metadata.get("image", ""),
         },
     )
 
     try:
         services.fetch_and_store_anime_episodes(item)
-    except Exception:
-        logger.warning('Could not fetch Simkl episodes for anime %s', item.media_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not fetch Simkl episodes for anime %s", item.media_id)
 
     episodes_qs = AnimeEpisode.objects.filter(
-        anime_item=item, is_special=False,
-    ).order_by('episode_number')
+        anime_item=item,
+        is_special=False,
+    ).order_by("episode_number")
 
     if not episodes_qs.exists():
         return
 
-    media_metadata['item_pk'] = item.pk
+    media_metadata["item_pk"] = item.pk
 
     watched_ids: set[int] = set()
     watched_ep_pks: dict[int, int] = {}
@@ -1157,21 +1162,21 @@ def _enrich_anime_episodes(media_metadata: dict, current_instance: Anime | None)
         current_instance._migrate_legacy_progress()
         rows = WatchedAnimeEpisode.objects.filter(
             anime=current_instance,
-        ).values('episode_id', 'id')
+        ).values("episode_id", "id")
         for row in rows:
-            watched_ids.add(row['episode_id'])
-            watched_ep_pks[row['episode_id']] = row['id']
+            watched_ids.add(row["episode_id"])
+            watched_ep_pks[row["episode_id"]] = row["id"]
 
-    media_metadata['episodes'] = [
+    media_metadata["episodes"] = [
         {
-            'episode_number': ep.episode_number,
-            'title': ep.title or f'Episode {ep.episode_number}',
-            'overview': ep.description,
-            'air_date': ep.aired.strftime('%Y-%m-%d') if ep.aired else None,
-            'image': ep.img or '',
-            'episode_pk': ep.pk,
-            'watched': ep.pk in watched_ids,
-            'watched_episode_pk': watched_ep_pks.get(ep.pk),
+            "episode_number": ep.episode_number,
+            "title": ep.title or f"Episode {ep.episode_number}",
+            "overview": ep.description,
+            "air_date": ep.aired.strftime("%Y-%m-%d") if ep.aired else None,
+            "image": ep.img or "",
+            "episode_pk": ep.pk,
+            "watched": ep.pk in watched_ids,
+            "watched_episode_pk": watched_ep_pks.get(ep.pk),
         }
         for ep in episodes_qs
     ]
@@ -1197,7 +1202,9 @@ def _split_anime_related(media_metadata: dict) -> None:
         r for r in all_related if r.get("relation_type") in _ALTERNATIVE_RELATION_TYPES
     ]
     remaining = [
-        r for r in all_related if r.get("relation_type") not in _ALTERNATIVE_RELATION_TYPES
+        r
+        for r in all_related
+        if r.get("relation_type") not in _ALTERNATIVE_RELATION_TYPES
     ]
 
     # Rebuild the related dict in display order:
