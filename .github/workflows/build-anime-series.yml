@@ -1,0 +1,34 @@
+name: Build anime-series image
+
+# The fork's image is published by "Docker Image" (docker-image.yml), which upstream
+# runs only for dev, tags and pull requests. This starts it for every change that
+# lands on anime-series, so the ghcr.io/soksanichenko/yamtrack:anime-series tag that
+# the infra repo deploys never lags behind the branch. Kept in its own file so
+# syncs from upstream never conflict with it.
+on:
+  push:
+    branches:
+      - anime-series
+    paths-ignore:
+      - ".github/**"
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
+
+concurrency:
+  group: build-anime-series
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # workflow_dispatch is one of the events GITHUB_TOKEN may start.
+      - name: Start the Docker Image workflow on anime-series
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run docker-image.yml --ref anime-series
